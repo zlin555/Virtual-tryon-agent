@@ -34,8 +34,16 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
+
+# Load .env if present (pip install python-dotenv)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from pydantic import BaseModel, Field
 
@@ -177,6 +185,158 @@ class VirtualTryOnStub(VirtualTryOnService):
                 "style_note": payload.style_note,
             },
         )
+
+
+class FashnTryOnService(VirtualTryOnService):
+    """Virtual try-on via FASHN API (fashn.ai).
+
+    Sign up at https://fashn.ai to get an API key.
+    Pricing: $0.075 per image. New accounts receive 10 free credits.
+
+    Set environment variable: FASHN_API_KEY=your_key_here
+    """
+
+    _POLL_INTERVAL = 3   # seconds between status checks
+    _MAX_POLLS = 40      # 40 * 3s = 120s timeout
+
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+        self._base_url = "https://api.fashn.ai/v1"
+
+    def run_tryon(self, payload: TryOnInput) -> TryOnResult:
+        import urllib.request
+
+        headers_dict = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "VirtualTryOnAgent/1.0",
+        }
+
+        inputs: Dict[str, Any] = {
+            "model_image": payload.person_image_url,
+            "garment_image": payload.garment_image_url,
+            "garment_photo_type": "auto",
+            "mode": "balanced",
+            "output_format": "png",
+        }
+        body = {"model_name": "tryon-v1.6", "inputs": inputs}
+
+        # Submit prediction
+        try:
+            req = urllib.request.Request(
+                f"{self._base_url}/run",
+                data=json.dumps(body).encode(),
+                headers=headers_dict,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                prediction = json.loads(resp.read())
+        except Exception as exc:
+            return TryOnResult(status="error", message=f"FASHN submit failed: {exc}")
+
+        prediction_id = prediction.get("id")
+        if not prediction_id:
+            err = prediction.get("error", prediction)
+            return TryOnResult(status="error", message=f"FASHN returned no prediction ID: {err}")
+
+        # Poll for completion
+        status_req_headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "User-Agent": "VirtualTryOnAgent/1.0",
+        }
+        for _ in range(self._MAX_POLLS):
+            time.sleep(self._POLL_INTERVAL)
+            try:
+                poll_req = urllib.request.Request(
+                    f"{self._base_url}/status/{prediction_id}",
+                    headers=status_req_headers,
+                    method="GET",
+                )
+                with urllib.request.urlopen(poll_req, timeout=15) as resp:
+                    status_data = json.loads(resp.read())
+            except Exception as exc:
+                return TryOnResult(status="error", message=f"FASHN poll failed: {exc}")
+
+            state = status_data.get("status", "")
+            if state == "completed":
+                output = status_data.get("output", [])
+                if output:
+                    # output may be a list of URL strings or dicts with a "url" key
+                    first = output[0]
+                    result_url = first if isinstance(first, str) else first.get("url", "")
+                    return TryOnResult(
+                        status="success",
+                        result_image_url=result_url,
+                        message="Virtual try-on completed via FASHN API.",
+                    )
+                return TryOnResult(status="error", message="FASHN completed but returned no output URLs.")
+            elif state in ("failed", "error"):
+                err = status_data.get("error", "unknown error")
+                return TryOnResult(status="error", message=f"FASHN try-on failed: {err}")
+            # states "starting" / "processing" — keep polling
+
+        return TryOnResult(status="error", message="FASHN try-on timed out after 120 seconds.")
+
+
+class ReplicateTryOnService(VirtualTryOnService):
+    """Virtual try-on via Replicate API using IDM-VTON model.
+
+    Sign up at https://replicate.com and add a payment method.
+    Pricing: ~$0.025 per prediction.
+    Note: IDM-VTON is licensed CC BY-NC-SA 4.0 (non-commercial use only).
+
+    Requires: pip install replicate
+    Set environment variable: REPLICATE_API_TOKEN=your_token_here
+    """
+
+    _MODEL = "cuuupid/idm-vton"
+
+    def __init__(self, api_token: str):
+        self._api_token = api_token
+
+    def run_tryon(self, payload: TryOnInput) -> TryOnResult:
+        try:
+            import replicate  # pip install replicate
+        except ImportError:
+            return TryOnResult(
+                status="error",
+                message="Replicate SDK not installed. Run: pip install replicate",
+            )
+
+        category = self._map_category(payload.garment_type)
+        try:
+            client = replicate.Client(api_token=self._api_token)
+            output = client.run(
+                self._MODEL,
+                input={
+                    "human_img": payload.person_image_url,
+                    "garm_img": payload.garment_image_url,
+                    "garment_des": payload.style_note or (payload.garment_type or "clothing item"),
+                    "category": category,
+                    "crop": False,
+                    "seed": 42,
+                    "steps": 30,
+                },
+            )
+            result_url = str(output[0]) if isinstance(output, list) else str(output)
+            return TryOnResult(
+                status="success",
+                result_image_url=result_url,
+                message="Virtual try-on completed via Replicate IDM-VTON.",
+            )
+        except Exception as exc:
+            return TryOnResult(status="error", message=f"Replicate try-on error: {exc}")
+
+    @staticmethod
+    def _map_category(garment_type: Optional[str]) -> str:
+        if not garment_type:
+            return "upper_body"
+        gt = garment_type.lower()
+        if gt in ("dress", "dresses", "gown", "jumpsuit"):
+            return "dresses"
+        if gt in ("pants", "skirt", "shorts", "jeans", "trousers", "lower", "bottom"):
+            return "lower_body"
+        return "upper_body"
 
 
 # =========================
@@ -349,10 +509,32 @@ class VirtualTryOnOrchestrator:
 # App factory
 # =========================
 
+def _resolve_tryon_service() -> VirtualTryOnService:
+    """Pick a real try-on backend from environment variables, or fall back to the stub.
+
+    Priority:
+      1. FASHN_API_KEY  → FashnTryOnService   (recommended)
+      2. REPLICATE_API_TOKEN → ReplicateTryOnService
+      3. (neither set) → VirtualTryOnStub
+    """
+    fashn_key = os.getenv("FASHN_API_KEY")
+    replicate_token = os.getenv("REPLICATE_API_TOKEN")
+
+    if fashn_key:
+        print("[tryon] Using FASHN API (fashn.ai)")
+        return FashnTryOnService(api_key=fashn_key)
+    if replicate_token:
+        print("[tryon] Using Replicate IDM-VTON")
+        return ReplicateTryOnService(api_token=replicate_token)
+
+    print("[tryon] No API key found — using stub (set FASHN_API_KEY or REPLICATE_API_TOKEN)")
+    return VirtualTryOnStub()
+
+
 def build_app_agent() -> VirtualTryOnOrchestrator:
     deps = AgentDependencies(
         image_search_service=UnsplashImageSearchStub(),
-        tryon_service=VirtualTryOnStub(),
+        tryon_service=_resolve_tryon_service(),
     )
 
     agent = VirtualTryOnAgent(model_name="gpt-4.1-mini", temperature=0.2).build(deps)
