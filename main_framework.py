@@ -25,6 +25,9 @@ Environment variables:
 
 Install:
     pip install -U langchain langchain-openai pydantic
+    pip install torch torchvision
+    pip install git+https://github.com/openai/CLIP.git
+    pip install -q faiss-cpu
 
 Run:
     python virtual_tryon_langchain_framework.py
@@ -37,6 +40,11 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
+import pandas as pd
+import numpy as np
+import torch
+from transformers import CLIPProcessor, CLIPModel
+import faiss
 
 # Load .env if present (pip install python-dotenv)
 try:
@@ -154,7 +162,88 @@ class UnsplashImageSearchStub(ImageSearchService):
                 )
             )
         return results
+        
+class ProductRetrievalService(ImageSearchService):
+    def __init__(self, products_csv, text_features_path, image_features_path):
+        self.df = pd.read_csv(products_csv)
+        self.text_features = np.load(text_features_path).astype("float32")
+        self.image_features = np.load(image_features_path).astype("float32")
 
+        faiss.normalize_L2(self.image_features)
+
+        dim = self.image_features.shape[1]
+        self.index = faiss.IndexFlatIP(dim)
+        self.index.add(self.image_features)
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+
+    def search_images(self, query, category=None, limit=6):
+      inputs = self.processor(
+          text=[query],
+          return_tensors="pt",
+          padding=True,
+          truncation=True
+      ).to(self.device)
+
+      with torch.no_grad():
+          text_outputs = self.model.text_model(
+              input_ids=inputs["input_ids"],
+              attention_mask=inputs["attention_mask"]
+          )
+          pooled_output = text_outputs.pooler_output
+          query_feature = self.model.text_projection(pooled_output)
+          query_feature = query_feature / query_feature.norm(dim=-1, keepdim=True)
+
+      query_feature = query_feature.cpu().numpy().astype("float32")
+      faiss.normalize_L2(query_feature)
+
+      if not category:
+          scores, indices = self.index.search(query_feature, limit)
+          top_results = self.df.iloc[indices[0]].copy()
+          top_results["score"] = scores[0]
+      else:
+          scores, indices = self.index.search(query_feature, min(limit * 20, len(self.df)))
+
+          rows = []
+          category_lower = category.lower()
+
+          for score, idx in zip(scores[0], indices[0]):
+              row = self.df.iloc[idx]
+              sub_category = str(row.get("subCategory", "")).lower()
+              article_type = str(row.get("articleType", "")).lower()
+
+              if category_lower in sub_category or category_lower in article_type:
+                  row_dict = row.to_dict()
+                  row_dict["score"] = float(score)
+                  rows.append(row_dict)
+
+              if len(rows) >= limit:
+                  break
+
+          top_results = pd.DataFrame(rows)
+
+      results = []
+      for _, row in top_results.iterrows():
+          results.append(
+              SearchImageResult(
+                  image_id=str(row["id"]),
+                  title=str(row["productDisplayName"]),
+                  image_url=str(row["link"]),
+                  source="kaggle_fashion_dataset_faiss",
+                  metadata={
+                      "category": row.get("subCategory", ""),
+                      "articleType": row.get("articleType", ""),
+                      "color": row.get("baseColour", ""),
+                      "usage": row.get("usage", ""),
+                      "score": float(row["score"]),
+                  },
+              )
+          )
+
+      return results
 
 class VirtualTryOnService:
     """Abstract-ish interface for virtual try-on backend."""
@@ -533,7 +622,11 @@ def _resolve_tryon_service() -> VirtualTryOnService:
 
 def build_app_agent() -> VirtualTryOnOrchestrator:
     deps = AgentDependencies(
-        image_search_service=UnsplashImageSearchStub(),
+        image_search_service=ProductRetrievalService(
+            products_csv="./cleaned_data.csv",
+            text_features_path="./final_text_features.npy",
+            image_features_path="./final_image_features.npy",
+        ),
         tryon_service=_resolve_tryon_service(),
     )
 
