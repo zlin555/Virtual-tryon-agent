@@ -1,0 +1,22 @@
+# Core agent deps
+langchain
+langchain-openai
+langgraph
+pydantic
+python-dotenv
+
+# Product retrieval (teammate's ProductRetrievalService)
+faiss-cpu
+transformers
+torch
+torchvision
+pandas
+numpy
+
+# Gradio UI (existing app.py)
+gradio
+
+# FastAPI backend (api.py)
+fastapi
+uvicorn[standard]
+python-multipart

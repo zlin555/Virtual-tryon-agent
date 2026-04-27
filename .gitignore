@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Large binary / data files
+*.npy
+*.pt
+*.bin
+*.safetensors
+
+# Node
+frontend/node_modules/
+
+# OS
+.DS_Store

@@ -56,7 +56,7 @@ except ImportError:
 from pydantic import BaseModel, Field
 
 from langchain.tools import tool
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
 
 
@@ -517,10 +517,10 @@ class VirtualTryOnAgent:
             temperature=self.temperature,
         )
 
-        self._agent = create_agent(
+        self._agent = create_react_agent(
             model=model,
             tools=tools,
-            system_prompt=SYSTEM_PROMPT,
+            prompt=SYSTEM_PROMPT,
         )
         return self
 
