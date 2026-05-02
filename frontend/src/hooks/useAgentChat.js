@@ -38,11 +38,19 @@ export default function useAgentChat() {
     setError('')
     setWarmingUp('')
 
-    // Check if agent is ready; warn but proceed regardless so we don't block forever
+    // Check if CLIP+FAISS agent is ready; if not, poll until it is
     try {
       const { data } = await api.get('/ready')
       if (!data.ready) {
-        setWarmingUp('AI model warming up… request may take a moment')
+        setWarmingUp('AI model loading… this takes ~60s on first run')
+        const ready = await waitForAgent((msg) => setWarmingUp(msg))
+        if (!ready) {
+          setError('Agent took too long to load. Please refresh and try again.')
+          setLoading(false)
+          setWarmingUp('')
+          return
+        }
+        setWarmingUp('')
       }
     } catch (_) { /* server may not have /ready yet, continue anyway */ }
 
