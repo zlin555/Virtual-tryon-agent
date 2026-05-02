@@ -74,9 +74,23 @@ export default function useAgentChat() {
         setRecommendations((prev) => [...prev, ...recs])
       }
 
-      // Extract style DNA from first analysis response (heuristic: look for keyword "style profile")
-      if (!styleDNA && response.toLowerCase().includes('style profile')) {
-        setStyleDNA(response)
+      // Extract style DNA keywords from the first analysis response
+      if (!styleDNA) {
+        const STYLE_TERMS = [
+          'Minimalist', 'Streetwear', 'Bohemian', 'Preppy', 'Dark Academia',
+          'Y2K', 'Coastal', 'Office-Core', 'Cottagecore', 'Romantic', 'Edgy',
+          'Casual', 'Formal', 'Vintage', 'Modern', 'Classic', 'Chic', 'Elegant',
+          'Bold', 'Playful', 'Earthy', 'Monochrome', 'Feminine', 'Androgynous',
+          'Luxe', 'Sporty', 'Grunge', 'Artsy', 'Preppy', 'Timeless',
+        ]
+        // Match quoted phrases and known style terms from the response
+        const quotedMatches = response.match(/"([^"]{2,30})"|'([^']{2,30})'/g) || []
+        const quoted = quotedMatches.map(t => t.replace(/['"]/g, '').trim())
+        const termMatches = STYLE_TERMS.filter(t =>
+          response.toLowerCase().includes(t.toLowerCase())
+        )
+        const keywords = [...new Set([...termMatches, ...quoted])].slice(0, 10)
+        if (keywords.length > 0) setStyleDNA(keywords)
       }
 
       return response

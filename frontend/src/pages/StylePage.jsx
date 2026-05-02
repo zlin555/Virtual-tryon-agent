@@ -110,15 +110,8 @@ function RecommendationCard({ rec, onTryOn, onSave }) {
 }
 
 // ── StyleDNA Card ─────────────────────────────────────────────────────────────
-function StyleDNACard({ text }) {
-  // Extract tags heuristically: look for quoted words or capitalized style terms
-  const tagMatches = text.match(/"([^"]+)"|'([^']+)'|\b(Minimalist|Streetwear|Bohemian|Preppy|Dark Academia|Y2K|Coastal|Office-Core|Cottagecore|Romantic|Edgy|Casual|Formal|Vintage|Modern|Classic)\b/g) || []
-  const tags = [...new Set(tagMatches.map(t => t.replace(/['"]/g, '')))]
-
-  // Grab first 3 sentences as the profile summary
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || []
-  const summary = sentences.slice(0, 3).join(' ')
-
+function StyleDNACard({ keywords }) {
+  if (!keywords || keywords.length === 0) return null
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
@@ -127,8 +120,8 @@ function StyleDNACard({ text }) {
       style={{ background: 'linear-gradient(135deg, #3D2B2B 0%, #1A1A1A 100%)', color: 'white' }}
     >
       <p className="text-xs uppercase tracking-widest mb-4" style={{ color: '#E8B4BA' }}>Your Style DNA</p>
-      <div className="flex flex-wrap gap-2 mb-5">
-        {tags.slice(0, 8).map((tag) => (
+      <div className="flex flex-wrap gap-2">
+        {keywords.map((tag) => (
           <span
             key={tag}
             className="px-3 py-1 rounded-full text-xs font-medium"
@@ -138,7 +131,6 @@ function StyleDNACard({ text }) {
           </span>
         ))}
       </div>
-      <p className="text-sm leading-relaxed opacity-80">{summary}</p>
     </motion.div>
   )
 }
@@ -326,7 +318,7 @@ export default function StylePage() {
         </AnimatePresence>
 
         {/* StyleDNA */}
-        {styleDNA && <StyleDNACard text={styleDNA} />}
+        {styleDNA && styleDNA.length > 0 && <StyleDNACard keywords={styleDNA} />}
 
         {/* Recommendations grid */}
         {recommendations.length > 0 && (
@@ -373,8 +365,11 @@ export default function StylePage() {
                       border: msg.role === 'assistant' ? '1px solid #E8B4BA' : 'none',
                     }}
                   >
-                    {/* Strip json code blocks from display */}
-                    {msg.content.replace(/```json[\s\S]*?```/g, '[Recommendations updated ✦]')}
+                    {/* Strip json code blocks, markdown images, and bare URLs from display */}
+                    {msg.content
+                      .replace(/```json[\s\S]*?```/g, '[Recommendations updated ✦]')
+                      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+                      .replace(/https?:\/\/[^\s)\]>"']+/g, '')}
                   </div>
                 </div>
               ))}
