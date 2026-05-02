@@ -3,11 +3,10 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": "vite",
+  "functions": {
+    "api/[...path].js": { "maxDuration": 60 }
+  },
   "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://irritate-craving-monopoly.ngrok-free.dev/api/:path*"
-    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
