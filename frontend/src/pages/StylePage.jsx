@@ -84,8 +84,13 @@ function RecommendationCard({ rec, onTryOn, onSave }) {
           {rec.title}
         </p>
         {(rec.metadata?.color || rec.metadata?.articleType || rec.metadata?.usage) && (
-          <p className="text-xs mb-3" style={{ color: '#8C7B75' }}>
+          <p className="text-xs mb-1" style={{ color: '#8C7B75' }}>
             {[rec.metadata?.color, rec.metadata?.articleType, rec.metadata?.usage].filter(Boolean).join(' · ')}
+          </p>
+        )}
+        {rec.metadata?.price_usd != null && (
+          <p className="text-sm font-medium mb-3" style={{ color: '#8B5A50' }}>
+            ${Number(rec.metadata.price_usd).toFixed(2)}
           </p>
         )}
         <div className="flex gap-2">

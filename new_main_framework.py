@@ -205,7 +205,7 @@ class ProductRetrievalService(ImageSearchService):
         self.index.add(self.image_features)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(self.device)
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
 
@@ -267,6 +267,7 @@ class ProductRetrievalService(ImageSearchService):
                         "articleType": row.get("articleType", ""),
                         "color": row.get("baseColour", ""),
                         "usage": row.get("usage", ""),
+                        "price_usd": row.get("price_usd", None),
                         "score": float(row["score"]),
                     },
                 )
