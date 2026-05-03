@@ -33,7 +33,7 @@ export default function useAgentChat() {
   const [warmingUp, setWarmingUp] = useState('')
   const [error, setError] = useState('')
 
-  const sendMessage = useCallback(async (message) => {
+  const sendMessage = useCallback(async (message, styleImageUrl = null) => {
     setLoading(true)
     setError('')
     setWarmingUp('')
@@ -61,6 +61,7 @@ export default function useAgentChat() {
       const { data } = await api.post('/agent/chat', {
         message,
         history: history.slice(-6),
+        ...(styleImageUrl ? { style_image_url: styleImageUrl } : {}),
       })
 
       const response = data.response
@@ -101,6 +102,7 @@ export default function useAgentChat() {
     } finally {
       setLoading(false)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history, styleDNA])
 
   const reset = useCallback(() => {

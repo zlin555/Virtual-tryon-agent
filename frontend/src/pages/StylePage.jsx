@@ -156,20 +156,19 @@ export default function StylePage() {
   const handleAnalyze = async () => {
     const aestheticsText = selectedAesthetics.length ? `Style aesthetics: ${selectedAesthetics.join(', ')}.` : ''
     const occasionsText = selectedOccasions.length ? `Occasions: ${selectedOccasions.join(', ')}.` : ''
-    const imagesText = refImageUrls.filter(Boolean).length
-      ? `Reference images: ${refImageUrls.filter(Boolean).join(', ')}.`
-      : ''
 
     const prompt = [
       description,
       aestheticsText,
       occasionsText,
-      imagesText,
       'Based on this, analyze my style profile and recommend 6 outfits that match these preferences.',
     ].filter(Boolean).join(' ')
 
+    // Pass the first uploaded reference image URL for visual analysis by the backend
+    const styleImageUrl = refImageUrls.find(Boolean) || null
+
     setAnalyzed(false)
-    await sendMessage(prompt)
+    await sendMessage(prompt, styleImageUrl)
     setAnalyzed(true)
     setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 300)
   }

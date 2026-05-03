@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from main_framework import (
+from new_main_framework import (
     AgentRequest,
     FashnTryOnService,
     TryOnInput,
@@ -92,6 +92,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[ChatMessage] = []
+    style_image_url: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -134,7 +135,10 @@ def agent_chat(req: ChatRequest) -> ChatResponse:
         # Invoke VirtualTryOnAgent directly to get all messages,
         # including ToolMessage objects containing real search results
         agent = _get_agent()
-        raw = agent.agent.invoke(AgentRequest(user_message=full_message))
+        raw = agent.agent.invoke(AgentRequest(
+            user_message=full_message,
+            style_image_url=req.style_image_url,
+        ))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
