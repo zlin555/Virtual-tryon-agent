@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
@@ -195,21 +196,103 @@ class UnsplashImageSearchStub(ImageSearchService):
 class ProductRetrievalService(ImageSearchService):
     def __init__(self, products_csv, text_features_path, image_features_path):
         self.df = pd.read_csv(products_csv)
+
         self.text_features = np.load(text_features_path).astype("float32")
         self.image_features = np.load(image_features_path).astype("float32")
 
+        # Normalize image features once for cosine similarity / inner product search
         faiss.normalize_L2(self.image_features)
 
+        # Full FAISS index, used only when no gender filter is detected
         dim = self.image_features.shape[1]
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(self.image_features)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(self.device)
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
+    def _extract_gender_from_query(self, query: str) -> Optional[str]:
+        """
+        Extract frontend-provided gender from user query.
 
-    def search_images(self, query, category=None, limit=6):
+        Expected query example:
+        "Can you recommend some female blazers for me?
+         Occasions: Everyday. Gender: Women.
+         Based on this, analyze my style profile..."
+
+        Supports both English colon ":" and Chinese/full-width colon "：".
+        Returns:
+            "men", "women", "unisex", or None
+        """
+        if not query:
+            return None
+
+        query_lower = query.lower()
+
+        # Strong rule: extract from explicit frontend field: Gender: Women / Men / Unisex
+        match = re.search(
+            r"gender\s*[:：]\s*(men|man|male|women|woman|female|unisex)",
+            query_lower,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            value = match.group(1).lower()
+
+            if value in ["men", "man", "male"]:
+                return "men"
+            if value in ["women", "woman", "female"]:
+                return "women"
+            if value == "unisex":
+                return "unisex"
+
+        # Fallback rule: if the explicit Gender field is missing,
+        # infer from common words in the query.
+        # Your frontend should usually make this unnecessary,
+        # but it makes local tests more robust.
+        if re.search(r"\b(women|woman|female|girl|girls)\b", query_lower):
+            return "women"
+
+        if re.search(r"\b(men|man|male|boy|boys)\b", query_lower):
+            return "men"
+
+        if re.search(r"\bunisex\b", query_lower):
+            return "unisex"
+
+        return None
+
+    def _get_gender_allowed_values(self, gender_filter: Optional[str]) -> Optional[List[str]]:
+        """
+        Map frontend gender to dataset gender labels.
+
+        Dataset gender values:
+        - Men
+        - Women
+        - Boys
+        - Girls
+        - Unisex
+
+        Requirement:
+        - Men includes Men + Boys + Unisex
+        - Women includes Women + Girls + Unisex
+        - Unisex includes Unisex
+        """
+        if gender_filter == "men":
+            return ["men", "boys", "unisex"]
+
+        if gender_filter == "women":
+            return ["women", "girls", "unisex"]
+
+        if gender_filter == "unisex":
+            return ["unisex"]
+
+        return None
+
+    def _encode_query(self, query: str) -> np.ndarray:
+        """
+        Encode text query into normalized CLIP text embedding.
+        """
         inputs = self.processor(
             text=[query],
             return_tensors="pt",
@@ -229,33 +312,82 @@ class ProductRetrievalService(ImageSearchService):
         query_feature = query_feature.cpu().numpy().astype("float32")
         faiss.normalize_L2(query_feature)
 
-        if not category:
-            scores, indices = self.index.search(query_feature, limit)
-            top_results = self.df.iloc[indices[0]].copy()
-            top_results["score"] = scores[0]
-        else:
-            scores, indices = self.index.search(query_feature, min(limit * 20, len(self.df)))
+        return query_feature
 
-            rows = []
-            category_lower = category.lower()
+    def _build_filtered_index(self, filtered_indices: np.ndarray):
+        """
+        Build a temporary FAISS index only over filtered product rows.
 
-            for score, idx in zip(scores[0], indices[0]):
-                row = self.df.iloc[idx]
-                sub_category = str(row.get("subCategory", "")).lower()
-                article_type = str(row.get("articleType", "")).lower()
+        filtered_indices stores original dataframe row indices.
+        We search on filtered_features, then map local FAISS result index
+        back to original dataframe index.
+        """
+        filtered_features = self.image_features[filtered_indices].astype("float32")
 
-                if category_lower in sub_category or category_lower in article_type:
-                    row_dict = row.to_dict()
-                    row_dict["score"] = float(score)
-                    rows.append(row_dict)
+        dim = filtered_features.shape[1]
+        filtered_index = faiss.IndexFlatIP(dim)
+        filtered_index.add(filtered_features)
 
-                if len(rows) >= limit:
-                    break
+        return filtered_index
 
-            top_results = pd.DataFrame(rows)
+    def search_images(self, query, category=None, limit=6):
+        query_feature = self._encode_query(query)
+
+        gender_filter = self._extract_gender_from_query(query)
+        allowed_genders = self._get_gender_allowed_values(gender_filter)
+
+        candidate_df = self.df.copy()
+
+        # 1. Gender hard filter
+        if allowed_genders is not None and "gender" in candidate_df.columns:
+            gender_series = candidate_df["gender"].astype(str).str.strip().str.lower()
+            candidate_df = candidate_df[gender_series.isin(allowed_genders)]
+
+        # 2. Category hard/soft filter
+        # This keeps your original category logic:
+        # category can match subCategory or articleType.
+        if category:
+            category_lower = category.lower().strip()
+
+            sub_category_series = candidate_df["subCategory"].astype(str).str.lower()
+            article_type_series = candidate_df["articleType"].astype(str).str.lower()
+
+            candidate_df = candidate_df[
+                sub_category_series.str.contains(category_lower, na=False)
+                | article_type_series.str.contains(category_lower, na=False)
+            ]
+
+        # 3. Fallback if filter is too strict
+        # If nothing remains after gender/category filtering,
+        # fall back to gender-only filtering first.
+        if candidate_df.empty and allowed_genders is not None and "gender" in self.df.columns:
+            gender_series = self.df["gender"].astype(str).str.strip().str.lower()
+            candidate_df = self.df[gender_series.isin(allowed_genders)]
+
+        # If still empty, fall back to full dataset.
+        if candidate_df.empty:
+            candidate_df = self.df.copy()
+
+        # 4. Build temporary FAISS index over filtered candidates
+        filtered_indices = candidate_df.index.to_numpy()
+
+        if len(filtered_indices) == 0:
+            return []
+
+        filtered_index = self._build_filtered_index(filtered_indices)
+
+        search_k = min(limit, len(filtered_indices))
+        scores, local_indices = filtered_index.search(query_feature, search_k)
 
         results = []
-        for _, row in top_results.iterrows():
+
+        for score, local_idx in zip(scores[0], local_indices[0]):
+            if local_idx < 0:
+                continue
+
+            original_idx = filtered_indices[local_idx]
+            row = self.df.iloc[original_idx]
+
             results.append(
                 SearchImageResult(
                     image_id=str(row["id"]),
@@ -263,12 +395,13 @@ class ProductRetrievalService(ImageSearchService):
                     image_url=str(row["link"]),
                     source="kaggle_fashion_dataset_faiss",
                     metadata={
+                        "gender_filter_from_query": gender_filter,
+                        "dataset_gender": row.get("gender", ""),
                         "category": row.get("subCategory", ""),
                         "articleType": row.get("articleType", ""),
                         "color": row.get("baseColour", ""),
                         "usage": row.get("usage", ""),
-                        "price_usd": row.get("price_usd", None),
-                        "score": float(row["score"]),
+                        "score": float(score),
                     },
                 )
             )

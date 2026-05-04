@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
@@ -169,82 +170,217 @@ class ProductRetrievalService(ImageSearchService):
         self.text_features = np.load(text_features_path).astype("float32")
         self.image_features = np.load(image_features_path).astype("float32")
 
+        # Normalize image features for cosine similarity with FAISS inner product.
         faiss.normalize_L2(self.image_features)
 
+        # Full index as fallback when no filter is used.
         dim = self.image_features.shape[1]
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(self.image_features)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(self.device)
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
+    def _extract_gender_from_query(self, query: str) -> Optional[str]:
+        """
+        Extract gender from frontend query.
+
+        Expected frontend query examples:
+        - Gender: Men
+        - Gender: Women
+        - Gender: Unisex
+        - Gender：Women
+
+        Return:
+        - "men"
+        - "women"
+        - "unisex"
+        - None
+        """
+        if not query:
+            return None
+
+        query_lower = query.lower()
+
+        # Strong rule: use explicit frontend field first.
+        match = re.search(
+            r"gender\s*[:：]\s*(men|man|male|women|woman|female|unisex)",
+            query_lower,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            value = match.group(1).lower()
+
+            if value in ["men", "man", "male"]:
+                return "men"
+            if value in ["women", "woman", "female"]:
+                return "women"
+            if value == "unisex":
+                return "unisex"
+
+        # Fallback rule: infer from query words.
+        # This is only for robustness when the frontend field is missing.
+        if re.search(r"\b(women|woman|female|girl|girls)\b", query_lower):
+            return "women"
+
+        if re.search(r"\b(men|man|male|boy|boys)\b", query_lower):
+            return "men"
+
+        if re.search(r"\bunisex\b", query_lower):
+            return "unisex"
+
+        return None
+
+    def _get_allowed_dataset_genders(self, gender_filter: Optional[str]) -> Optional[List[str]]:
+        """
+        Map user gender to dataset gender values.
+
+        Requirement:
+        - men includes Men + Boys + Unisex
+        - women includes Women + Girls + Unisex
+        - unisex includes Unisex
+        """
+        if gender_filter == "men":
+            return ["men", "boys", "boy", "unisex"]
+
+        if gender_filter == "women":
+            return ["women", "girls", "girl", "unisex"]
+
+        if gender_filter == "unisex":
+            return ["unisex"]
+
+        return None
+
+    def _encode_query(self, query: str) -> np.ndarray:
+        """
+        Encode user query into normalized CLIP text embedding.
+        """
+        inputs = self.processor(
+            text=[query],
+            return_tensors="pt",
+            padding=True,
+            truncation=True
+        ).to(self.device)
+
+        with torch.no_grad():
+            text_outputs = self.model.text_model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"]
+            )
+            pooled_output = text_outputs.pooler_output
+            query_feature = self.model.text_projection(pooled_output)
+            query_feature = query_feature / query_feature.norm(dim=-1, keepdim=True)
+
+        query_feature = query_feature.cpu().numpy().astype("float32")
+        faiss.normalize_L2(query_feature)
+
+        return query_feature
+
+    def _search_filtered_candidates(
+        self,
+        query_feature: np.ndarray,
+        candidate_df: pd.DataFrame,
+        limit: int
+    ) -> pd.DataFrame:
+        """
+        Build a temporary FAISS index for filtered candidates.
+
+        Important:
+        FAISS local indices are not the same as original dataframe indices,
+        so we map local result indices back to original dataframe row indices.
+        """
+        if candidate_df.empty:
+            return pd.DataFrame()
+
+        original_indices = candidate_df.index.to_numpy()
+        candidate_features = self.image_features[original_indices].astype("float32")
+
+        dim = candidate_features.shape[1]
+        temp_index = faiss.IndexFlatIP(dim)
+        temp_index.add(candidate_features)
+
+        search_k = min(limit, len(candidate_df))
+        scores, local_indices = temp_index.search(query_feature, search_k)
+
+        rows = []
+
+        for score, local_idx in zip(scores[0], local_indices[0]):
+            if local_idx < 0:
+                continue
+
+            original_idx = original_indices[local_idx]
+            row_dict = self.df.iloc[original_idx].to_dict()
+            row_dict["score"] = float(score)
+            rows.append(row_dict)
+
+        return pd.DataFrame(rows)
 
     def search_images(self, query, category=None, limit=6):
-      inputs = self.processor(
-          text=[query],
-          return_tensors="pt",
-          padding=True,
-          truncation=True
-      ).to(self.device)
+        query_feature = self._encode_query(query)
 
-      with torch.no_grad():
-          text_outputs = self.model.text_model(
-              input_ids=inputs["input_ids"],
-              attention_mask=inputs["attention_mask"]
-          )
-          pooled_output = text_outputs.pooler_output
-          query_feature = self.model.text_projection(pooled_output)
-          query_feature = query_feature / query_feature.norm(dim=-1, keepdim=True)
+        gender_filter = self._extract_gender_from_query(query)
+        allowed_genders = self._get_allowed_dataset_genders(gender_filter)
 
-      query_feature = query_feature.cpu().numpy().astype("float32")
-      faiss.normalize_L2(query_feature)
+        candidate_df = self.df.copy()
 
-      if not category:
-          scores, indices = self.index.search(query_feature, limit)
-          top_results = self.df.iloc[indices[0]].copy()
-          top_results["score"] = scores[0]
-      else:
-          scores, indices = self.index.search(query_feature, min(limit * 20, len(self.df)))
+        # 1. Gender hard filter
+        if allowed_genders is not None and "gender" in candidate_df.columns:
+            gender_series = candidate_df["gender"].astype(str).str.strip().str.lower()
+            candidate_df = candidate_df[gender_series.isin(allowed_genders)]
 
-          rows = []
-          category_lower = category.lower()
+        # 2. Category filter
+        if category:
+            category_lower = category.lower().strip()
 
-          for score, idx in zip(scores[0], indices[0]):
-              row = self.df.iloc[idx]
-              sub_category = str(row.get("subCategory", "")).lower()
-              article_type = str(row.get("articleType", "")).lower()
+            sub_category_series = candidate_df["subCategory"].astype(str).str.lower()
+            article_type_series = candidate_df["articleType"].astype(str).str.lower()
 
-              if category_lower in sub_category or category_lower in article_type:
-                  row_dict = row.to_dict()
-                  row_dict["score"] = float(score)
-                  rows.append(row_dict)
+            candidate_df = candidate_df[
+                sub_category_series.str.contains(category_lower, na=False)
+                | article_type_series.str.contains(category_lower, na=False)
+            ]
 
-              if len(rows) >= limit:
-                  break
+        # 3. Fallback:
+        # If category + gender filter is too strict, fall back to gender-only.
+        if candidate_df.empty and allowed_genders is not None and "gender" in self.df.columns:
+            gender_series = self.df["gender"].astype(str).str.strip().str.lower()
+            candidate_df = self.df[gender_series.isin(allowed_genders)]
 
-          top_results = pd.DataFrame(rows)
+        # If still empty, fall back to the whole dataset.
+        if candidate_df.empty:
+            candidate_df = self.df.copy()
 
-      results = []
-      for _, row in top_results.iterrows():
-          results.append(
-              SearchImageResult(
-                  image_id=str(row["id"]),
-                  title=str(row["productDisplayName"]),
-                  image_url=str(row["link"]),
-                  source="kaggle_fashion_dataset_faiss",
-                  metadata={
-                      "category": row.get("subCategory", ""),
-                      "articleType": row.get("articleType", ""),
-                      "color": row.get("baseColour", ""),
-                      "usage": row.get("usage", ""),
-                      "price_usd": row.get("price_usd", None),
-                      "score": float(row["score"]),
-                  },
-              )
-          )
+        # 4. Search only inside the filtered candidate dataframe.
+        top_results = self._search_filtered_candidates(
+            query_feature=query_feature,
+            candidate_df=candidate_df,
+            limit=limit
+        )
 
-      return results
+        results = []
+
+        for _, row in top_results.iterrows():
+            results.append(
+                SearchImageResult(
+                    image_id=str(row["id"]),
+                    title=str(row["productDisplayName"]),
+                    image_url=str(row["link"]),
+                    source="kaggle_fashion_dataset_faiss",
+                    metadata={
+                        "gender_filter_from_query": gender_filter,
+                        "dataset_gender": row.get("gender", ""),
+                        "category": row.get("subCategory", ""),
+                        "articleType": row.get("articleType", ""),
+                        "color": row.get("baseColour", ""),
+                        "usage": row.get("usage", ""),
+                        "score": float(row["score"]),
+                    },
+                )
+            )
+
+        return results
 
 class VirtualTryOnService:
     """Abstract-ish interface for virtual try-on backend."""
