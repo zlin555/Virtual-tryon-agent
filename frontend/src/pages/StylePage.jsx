@@ -11,6 +11,7 @@ const AESTHETICS = [
   'Y2K', 'Coastal', 'Office-Core', 'Cottagecore', 'Romantic', 'Edgy',
 ]
 const OCCASIONS = ['Everyday', 'Work', 'Date Night', 'Weekend', 'Formal', 'Beach', 'Party']
+const GENDERS = ['Women', 'Men', 'Unisex']
 
 // ── Reference Image Upload Cell ───────────────────────────────────────────────
 function ImageCell({ onFile }) {
@@ -147,6 +148,7 @@ export default function StylePage() {
   const { history, recommendations, styleDNA, loading, warmingUp, sendMessage } = useAgentChat()
 
   const [description, setDescription] = useState('')
+  const [selectedGender, setSelectedGender] = useState('')
   const [selectedAesthetics, setSelectedAesthetics] = useState([])
   const [selectedOccasions, setSelectedOccasions] = useState([])
   const [refImageUrls, setRefImageUrls] = useState(['', '', '', ''])
@@ -159,11 +161,13 @@ export default function StylePage() {
   }
 
   const handleAnalyze = async () => {
+    const genderText = selectedGender ? `Gender: ${selectedGender}.` : ''
     const aestheticsText = selectedAesthetics.length ? `Style aesthetics: ${selectedAesthetics.join(', ')}.` : ''
     const occasionsText = selectedOccasions.length ? `Occasions: ${selectedOccasions.join(', ')}.` : ''
 
     const prompt = [
       description,
+      genderText,
       aestheticsText,
       occasionsText,
       'Based on this, analyze my style profile and recommend 6 outfits that match these preferences.',
@@ -229,6 +233,25 @@ export default function StylePage() {
               onBlur={(e) => (e.target.style.borderColor = '#E8B4BA')}
             />
 
+            {/* Gender */}
+            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>Gender</p>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {GENDERS.map((g) => (
+                <button
+                  key={g} type="button"
+                  onClick={() => setSelectedGender(selectedGender === g ? '' : g)}
+                  className="px-4 py-1.5 rounded-full text-xs transition-all duration-200"
+                  style={{
+                    backgroundColor: selectedGender === g ? '#6B8CAE' : '#FAF7F2',
+                    color: selectedGender === g ? 'white' : '#8C7B75',
+                    border: `1px solid ${selectedGender === g ? '#6B8CAE' : '#E8B4BA'}`,
+                  }}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+
             {/* Aesthetics */}
             <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>Aesthetic</p>
             <div className="flex flex-wrap gap-2 mb-6">
@@ -286,7 +309,7 @@ export default function StylePage() {
 
             <button
               onClick={handleAnalyze}
-              disabled={(!description.trim() && !selectedAesthetics.length) || loading}
+              disabled={!selectedGender || (!description.trim() && !selectedAesthetics.length) || loading}
               className="w-full py-4 rounded-full text-white font-medium text-sm transition-all duration-300 disabled:opacity-60 hover:scale-105"
               style={{ backgroundColor: '#C97B84' }}
             >
@@ -297,7 +320,9 @@ export default function StylePage() {
                     {warmingUp || 'Searching catalog…'}
                   </span>
                 )
-                : 'Analyze My Style →'
+                : !selectedGender
+                  ? 'Select a Gender to Continue'
+                  : 'Analyze My Style →'
               }
             </button>
           </motion.div>
