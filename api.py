@@ -13,9 +13,9 @@ Run:
 from __future__ import annotations
 
 import os
+import json
 import threading
 import urllib.request
-import json
 from typing import List, Optional
 
 try:
@@ -30,150 +30,15 @@ from pydantic import BaseModel
 
 from main_framework import (
     AgentRequest,
-    AgentDependencies,
     FashnTryOnService,
-    ImageSearchService,
-    SearchImageResult,
     TryOnInput,
     TryOnResult,
-    VirtualTryOnAgent,
-    VirtualTryOnOrchestrator,
-    _resolve_tryon_service,
+    build_app_agent,
 )
 
-# ── Lightweight keyword search (no CLIP / no torch) ───────────────────────────
-import pandas as pd
+app = FastAPI(title="Virtual Try-On Agent API - CLIP FAISS")
 
-# Maps abstract style/aesthetic/occasion terms → concrete fashion keywords
-# present in the Myntra dataset (productDisplayName, articleType, etc.).
-# Terms mapped to [] are stop words — stripped before searching.
-_STYLE_EXPAND: dict = {
-    # Aesthetic styles
-    "punk":        ["jacket", "jeans", "black", "t-shirt", "boots"],
-    "streetwear":  ["hoodie", "graphic", "joggers", "casual", "track", "sneakers"],
-    "edgy":        ["black", "jacket", "boots"],
-    "grunge":      ["jeans", "jacket", "black", "boots"],
-    "minimalist":  ["white", "grey", "solid", "cotton"],
-    "minimal":     ["white", "grey", "solid", "cotton"],
-    "classic":     ["white", "shirt", "jeans", "solid"],
-    "boho":        ["floral", "printed", "kurta", "maxi"],
-    "bohemian":    ["floral", "printed", "kurta", "maxi"],
-    "preppy":      ["polo", "shirt", "blazer", "formal"],
-    "romantic":    ["floral", "pink", "dress"],
-    "sporty":      ["track", "sport", "jersey", "athletic"],
-    "chic":        ["dress", "shirt", "smart"],
-    "glamorous":   ["dress", "party", "formal"],
-    "vintage":     ["printed", "retro", "classic", "floral"],
-    "athleisure":  ["track", "sport", "joggers", "hoodie"],
-    # Occasions → usage values in dataset
-    "date":        ["party", "smart"],
-    "night":       ["party", "evening"],
-    "party":       ["party"],
-    "office":      ["formal", "smart"],
-    "everyday":    ["casual"],
-    "weekend":     ["casual"],
-    # Stop words — not meaningful for dataset search
-    "style":       [], "aesthetic": [], "aesthetics": [], "look": [],
-    "outfit":      [], "outfits":    [], "fashion":    [], "wear":  [],
-    "vibe":        [], "based":      [], "love":        [], "like":  [],
-    "prefer":      [], "recommend":  [], "i":           [], "my":    [],
-    "me":          [], "the":        [], "a":           [], "an":    [],
-    "and":         [], "or":         [], "for":         [], "with":  [],
-    "on":          [], "in":         [], "at":          [], "of":    [],
-    "is":          [], "that":       [], "this":        [], "these": [],
-    "please":      [], "can":        [], "you":         [], "want":  [],
-}
-
-
-class KeywordSearchService(ImageSearchService):
-    """Pandas-based keyword search over cleaned_data.csv.
-
-    Searches productDisplayName, subCategory, articleType, baseColour, usage.
-    Style/aesthetic terms are expanded via _STYLE_EXPAND so that e.g. 'punk'
-    maps to real clothing vocabulary instead of matching product names literally.
-    No ML model required — loads in < 1 second, zero GPU/RAM overhead.
-    """
-
-    def __init__(self, csv_path: str):
-        self.df = pd.read_csv(csv_path)
-        # Pre-build a lowercase searchable text column once
-        self.df["_search"] = (
-            self.df["productDisplayName"].fillna("").str.lower() + " " +
-            self.df["subCategory"].fillna("").str.lower() + " " +
-            self.df["articleType"].fillna("").str.lower() + " " +
-            self.df["baseColour"].fillna("").str.lower() + " " +
-            self.df["usage"].fillna("").str.lower()
-        )
-
-    def search_images(self, query: str, category: Optional[str] = None, limit: int = 6) -> list:
-        # Expand style/aesthetic terms into concrete dataset vocabulary
-        raw_tokens = query.lower().split()
-        search_terms: list[str] = []
-        for tok in raw_tokens:
-            if tok in _STYLE_EXPAND:
-                search_terms.extend(_STYLE_EXPAND[tok])   # may be [] (stop word)
-            else:
-                search_terms.append(tok)                  # keep literal token
-
-        if not search_terms:   # everything was a stop word — fall back to original
-            search_terms = raw_tokens
-
-        # Score each row by number of matching terms (higher = better match)
-        def _score(text: str) -> int:
-            return sum(1 for t in search_terms if t in text)
-
-        scores = self.df["_search"].apply(_score)
-        mask = scores > 0
-        filtered = self.df[mask].copy()
-        filtered["_score"] = scores[mask]
-        filtered = filtered.sort_values("_score", ascending=False)
-
-        # Optional category filter
-        if category and len(filtered) > 0:
-            cat = category.lower()
-            cat_mask = (
-                filtered["subCategory"].fillna("").str.lower().str.contains(cat, na=False) |
-                filtered["articleType"].fillna("").str.lower().str.contains(cat, na=False)
-            )
-            cat_filtered = filtered[cat_mask]
-            if len(cat_filtered) > 0:
-                filtered = cat_filtered
-
-        # Take top-scoring pool then sample for variety
-        pool = filtered.head(limit * 3)
-        sample = pool.sample(min(limit, len(pool)), random_state=42) if len(pool) >= limit else pool
-
-        results = []
-        for _, row in sample.iterrows():
-            results.append(SearchImageResult(
-                image_id=str(row.get("id", "")),
-                title=str(row.get("productDisplayName", "")),
-                image_url=str(row.get("link", "")),
-                source="kaggle_fashion_dataset_keyword",
-                metadata={
-                    "category": str(row.get("subCategory", "")),
-                    "articleType": str(row.get("articleType", "")),
-                    "color": str(row.get("baseColour", "")),
-                    "usage": str(row.get("usage", "")),
-                },
-            ))
-        return results
-
-
-def _build_agent_lightweight() -> VirtualTryOnOrchestrator:
-    deps = AgentDependencies(
-        image_search_service=KeywordSearchService("./cleaned_data.csv"),
-        tryon_service=_resolve_tryon_service(),
-    )
-    agent = VirtualTryOnAgent(model_name="gpt-4.1-mini", temperature=0.2).build(deps)
-    return VirtualTryOnOrchestrator(agent)
-
-# ── App init ─────────────────────────────────────────────────────────────────
-
-app = FastAPI(title="Virtual Try-On Agent API")
-
-# CORS: reads comma-separated origins from env, falls back to localhost dev
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:4173")
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:4173,*")
 _origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
@@ -184,17 +49,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Service init ──────────────────────────────────────────────────────────────
-
 FASHN_KEY = os.getenv("FASHN_API_KEY", "")
 if not FASHN_KEY:
     raise EnvironmentError("FASHN_API_KEY not set. Check your .env file.")
 
 _tryon_svc = FashnTryOnService(api_key=FASHN_KEY)
 
-# Background warm-up: CLIP model (~600MB) + FAISS index load is started in a
-# daemon thread at server startup so the first chat request doesn't block for
-# 60-120 s and time out. _agent_ready is set once loading completes.
 _agent_app = None
 _agent_ready = threading.Event()
 _agent_load_error: Optional[Exception] = None
@@ -203,8 +63,8 @@ _agent_load_error: Optional[Exception] = None
 def _load_agent_background():
     global _agent_app, _agent_load_error
     try:
-        print("[agent] Building lightweight keyword search agent…")
-        _agent_app = _build_agent_lightweight()
+        print("[agent] Building baseline agent from baseline.build_app_agent()...")
+        _agent_app = build_app_agent()
         print("[agent] Ready.")
     except Exception as exc:
         _agent_load_error = exc
@@ -215,12 +75,11 @@ def _load_agent_background():
 
 @app.on_event("startup")
 def startup_event():
-    t = threading.Thread(target=_load_agent_background, daemon=True)
-    t.start()
+    thread = threading.Thread(target=_load_agent_background, daemon=True)
+    thread.start()
 
 
 def _get_agent():
-    # Wait up to 300 s for CLIP + FAISS to finish loading
     loaded = _agent_ready.wait(timeout=300)
     if not loaded:
         raise HTTPException(status_code=503, detail="Agent is still loading. Please retry in a moment.")
@@ -228,7 +87,6 @@ def _get_agent():
         raise HTTPException(status_code=500, detail=f"Agent failed to load: {_agent_load_error}")
     return _agent_app
 
-# ── Request/response schemas ──────────────────────────────────────────────────
 
 class TryOnRequest(BaseModel):
     person_image_url: str
@@ -239,7 +97,7 @@ class TryOnRequest(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: str   # "user" | "assistant"
+    role: str
     content: str
 
 
@@ -256,8 +114,6 @@ class ChatResponse(BaseModel):
 class UploadResponse(BaseModel):
     image_url: str
 
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/tryon", response_model=TryOnResult)
 def run_tryon(req: TryOnRequest) -> TryOnResult:
@@ -328,6 +184,7 @@ def agent_chat(req: ChatRequest) -> ChatResponse:
                     pass
 
     return ChatResponse(response=response_text, search_results=search_results)
+
 
 
 @app.post("/api/upload-image", response_model=UploadResponse)
@@ -437,10 +294,16 @@ async def upload_image(file: UploadFile = File(...)) -> UploadResponse:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "search": "original_product_retrieval_clip_faiss",
+    }
 
 
 @app.get("/api/ready")
 def ready():
-    """Returns whether the CLIP+FAISS agent is loaded and ready."""
-    return {"ready": _agent_ready.is_set() and _agent_load_error is None}
+    return {
+        "ready": _agent_ready.is_set() and _agent_load_error is None,
+        "search": "original_product_retrieval_clip_faiss",
+        "error": str(_agent_load_error) if _agent_load_error else None,
+    }
