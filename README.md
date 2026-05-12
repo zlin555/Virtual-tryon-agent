@@ -14,8 +14,8 @@ Browser (React + Vite, :5173)
         |
         +-- POST /api/agent/chat --> LangGraph ReAct Agent (GPT-4.1-mini)
         |                                   |
-        |                                   +-- search_fashion_images --> KeywordSearchService
-        |                                   |                              (pandas over cleaned_data.csv)
+        |                                   +-- search_fashion_images --> ProductRetrievalService
+        |                                   |                              (CLIP + FAISS over cleaned_data.csv)
         |                                   +-- virtual_tryon ----------> FashnTryOnService
         |
         +-- POST /api/tryon -------> FashnTryOnService (fashn.ai)
@@ -27,10 +27,10 @@ This project is divided across four roles:
 
 | Role | Responsibility |
 |------|---------------|
-| **Person 1** | LangChain agent, tool definitions, prompt engineering, conversation flow |
-| **Person 2** | Product dataset (`cleaned_data.csv`), CLIP embeddings (`final_*_features.npy`), FAISS index |
-| **Person 3** | Virtual try-on integration (FASHN API), image preprocessing, tool implementation |
-| **Person 4** | React frontend, FastAPI bridge (`api.py`), image upload, evaluation |
+| **Suyuan Wang** | LangChain agent, tool definitions, prompt engineering, conversation flow |
+| **Ziahao Lin** | Product dataset (`cleaned_data.csv`), CLIP embeddings (`final_*_features.npy`), FAISS index |
+| **Haozhen Zheng** | Virtual try-on integration (FASHN API), image preprocessing, tool implementation |
+| **Larry Liao** | React frontend, FastAPI bridge (`api.py`), image upload |
 
 ---
 
@@ -39,7 +39,7 @@ This project is divided across four roles:
 - **Style Explorer** — describe your style + pick aesthetics and occasions; the agent recommends real products from a 44K-item Myntra dataset
 - **Virtual Try-On** — upload your photo and any garment image; FASHN API generates a photo-realistic overlay in ~20 seconds (no GPU required)
 - **Image upload** — drag-and-drop or paste a URL; images are hosted on imgbb for FASHN compatibility
-- **Keyword-based retrieval** — style/aesthetic terms (`punk`, `minimalist`, `streetwear`, etc.) are expanded to concrete dataset vocabulary before searching
+- **CLIP+FAISS semantic retrieval** — queries are encoded with a CLIP text encoder and matched against 44K pre-computed embeddings; `new_main_framework.py` adds gender-aware sub-index filtering
 - **Plug-and-play backend** — swap try-on or search services without touching agent logic
 
 ---
@@ -115,10 +115,12 @@ Retrieval is powered by the **Myntra fashion dataset** (~44K products) sourced f
 | File | Description |
 |------|-------------|
 | `cleaned_data.csv` | Product catalog: ID, name, category, color, usage, image URL |
-| `final_image_features.npy` | 44K x 512 CLIP image embeddings (pre-computed) |
-| `final_text_features.npy` | 44K x 512 CLIP text embeddings (pre-computed) |
+| `final_image_features.npy` | 44K x 512 CLIP image embeddings (pre-computed) — **not in repo, see below** |
+| `final_text_features.npy` | 44K x 512 CLIP text embeddings (pre-computed) — **not in repo, see below** |
 
-At runtime the backend uses **keyword search** (`KeywordSearchService` in `api.py`) — a fast pandas-based search that expands style terms to dataset vocabulary with no ML overhead. The CLIP+FAISS `ProductRetrievalService` (in `main_framework.py`) is also fully implemented and can be enabled on a machine with sufficient RAM (>= 4 GB free).
+> **Note:** `final_image_features.npy` and `final_text_features.npy` are excluded from the GitHub repository due to their large file size. You must obtain them separately (e.g. from a team member or by re-running the CLIP feature extraction script) and place them in the project root before starting the backend.
+
+At runtime the backend uses **CLIP+FAISS semantic search** (`ProductRetrievalService` in `main_framework.py` / `new_main_framework.py`). Queries are encoded with a CLIP text encoder and matched against 44K pre-computed image embeddings using a FAISS `IndexFlatIP` index. `new_main_framework.py` extends this with gender-aware sub-index filtering for higher relevance. Requires >= 4 GB free RAM to load the embeddings.
 
 ---
 
@@ -132,12 +134,14 @@ At runtime the backend uses **keyword search** (`KeywordSearchService` in `api.p
 
 ```
 Virtual-tryon-agent/
-├── api.py                   # FastAPI server — all /api/* endpoints
-├── main_framework.py        # LangGraph agent, tools, service interfaces
+├── api.py                   # FastAPI server — uses main_framework (CLIP+FAISS)
+├── api_clip.py              # FastAPI server — uses new_main_framework (CLIP+FAISS + gender filter)
+├── main_framework.py        # LangGraph agent, ProductRetrievalService, FashnTryOnService
+├── new_main_framework.py    # Updated framework with gender-aware FAISS sub-index filtering
 ├── app.py                   # Legacy Gradio UI (superseded by React frontend)
 ├── cleaned_data.csv         # Myntra product catalog (44K items)
-├── final_image_features.npy
-├── final_text_features.npy
+├── final_image_features.npy # 44K × 512 CLIP image embeddings (not in repo — too large)
+├── final_text_features.npy  # 44K × 512 CLIP text embeddings (not in repo — too large)
 ├── requirements.txt
 ├── .env.example
 └── frontend/                # React + Vite + Tailwind CSS v4
