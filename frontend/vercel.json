@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://irritate-craving-monopoly.ngrok-free.dev/api/:path*"
+      "destination": "https://zlin329-virtual-tryon-agent.hf.space/api/:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
