@@ -14,7 +14,22 @@ except ImportError:
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from backend.auth import (
+    AuthRequest,
+    TokenResponse,
+    UserResponse,
+    get_current_user,
+    get_current_user_optional,
+    login_user,
+    register_user,
+    user_to_response,
+)
+from backend.database import get_db, init_db
+from backend.models import User
 
 from new_main_framework import (
     AgentRequest,
@@ -59,6 +74,7 @@ def _load_agent_background():
 
 @app.on_event("startup")
 def startup_event():
+    init_db()
     thread = threading.Thread(target=_load_agent_background, daemon=True)
     thread.start()
 
@@ -94,10 +110,26 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     search_results: List[dict] = []
+    user_id: Optional[int] = None
 
 
 class UploadResponse(BaseModel):
     image_url: str
+
+
+@app.post("/api/auth/register", response_model=TokenResponse)
+def register(payload: AuthRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    return register_user(db, payload)
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+def login(payload: AuthRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    return login_user(db, payload)
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+def me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    return user_to_response(current_user)
 
 
 @app.post("/api/tryon", response_model=TryOnResult)
@@ -115,7 +147,10 @@ def run_tryon(req: TryOnRequest) -> TryOnResult:
 
 
 @app.post("/api/agent/chat", response_model=ChatResponse)
-def agent_chat(req: ChatRequest) -> ChatResponse:
+def agent_chat(
+    req: ChatRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+) -> ChatResponse:
     # Build a context-aware message that includes recent history
     history_text = ""
     if req.history:
@@ -171,7 +206,11 @@ def agent_chat(req: ChatRequest) -> ChatResponse:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-    return ChatResponse(response=response_text, search_results=search_results)
+    return ChatResponse(
+        response=response_text,
+        search_results=search_results,
+        user_id=current_user.id if current_user else None,
+    )
 
 
 

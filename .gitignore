@@ -18,9 +18,12 @@ venv/
 *.pt
 *.bin
 *.safetensors
+auth.db
+tmp_auth_test.db
 
 # Node
 frontend/node_modules/
+frontend/dist/
 
 # OS
 .DS_Store

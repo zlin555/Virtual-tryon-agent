@@ -166,6 +166,8 @@ Set these in **Hugging Face Space Settings -> Secrets**. Do not commit real key 
 | `FASHN_API_KEY` | Recommended | FASHN cloud virtual try-on |
 | `IMGBB_API_KEY` | Recommended | Public image hosting for uploaded images |
 | `REPLICATE_API_TOKEN` | Optional | Alternative IDM-VTON backend |
+| `DATABASE_URL` | Production auth | Aiven MySQL SQLAlchemy URL |
+| `JWT_SECRET_KEY` | Production auth | Long random secret for login JWTs |
 
 ### Required Space Variables
 
@@ -396,6 +398,44 @@ Response:
 }
 ```
 
+If the request includes a valid bearer token from `/api/auth/login` or `/api/auth/register`, the backend attaches the authenticated `user_id` to the response. Anonymous users can still use this endpoint, but their requests are not connected to a persisted user identity.
+
+### Authentication
+
+```http
+POST /api/auth/register
+POST /api/auth/login
+GET /api/auth/me
+```
+
+Register/login request:
+
+```json
+{
+  "username": "alice",
+  "password": "secret123"
+}
+```
+
+Register/login response:
+
+```json
+{
+  "access_token": "jwt-token",
+  "token_type": "bearer",
+  "user": {
+    "id": 1,
+    "username": "alice"
+  }
+}
+```
+
+Frontend requests store the token in `localStorage` and send it as:
+
+```http
+Authorization: Bearer jwt-token
+```
+
 ### Virtual Try-On
 
 ```http
@@ -434,6 +474,28 @@ Accepts multipart image upload and returns a public image URL that can be used b
 | `IMGBB_API_KEY` | Recommended | imgbb key for image hosting |
 | `ALLOWED_ORIGINS` | Production | Comma-separated allowed frontend origins |
 | `VITE_API_URL` | Production | Backend URL used by Vite proxy |
+| `DATABASE_URL` | Production auth | SQLAlchemy database URL; use Aiven MySQL for persistent users |
+| `JWT_SECRET_KEY` | Production auth | Secret used to sign login JWTs |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Optional | Login lifetime; defaults to 43200 minutes |
+
+### Aiven MySQL Setup
+
+1. Create an Aiven MySQL service.
+2. In the Aiven service page, open **Connection information**.
+3. Copy the host, port, username, password, and database name.
+4. Set this secret in Hugging Face Spaces:
+
+```text
+DATABASE_URL=mysql+pymysql://avnadmin:YOUR_PASSWORD@YOUR_HOST:YOUR_PORT/defaultdb
+```
+
+5. Also set:
+
+```text
+JWT_SECRET_KEY=use-a-long-random-secret
+```
+
+The backend creates the `users` table automatically at startup. Do not store plain text passwords; the backend stores only bcrypt password hashes.
 
 ---
 
@@ -445,6 +507,7 @@ Accepts multipart image upload and returns a public image URL that can be used b
 fastapi uvicorn[standard] python-multipart
 langchain langchain-openai langgraph
 pydantic python-dotenv
+sqlalchemy pymysql bcrypt python-jose[cryptography]
 pandas numpy
 torch torchvision transformers faiss-cpu
 ```
