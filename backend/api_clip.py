@@ -31,7 +31,7 @@ from backend.auth import (
 from backend.database import get_db, init_db
 from backend.models import User
 
-from new_main_framework import (
+from backend.new_main_framework import (
     AgentRequest,
     TryOnInput,
     TryOnResult,
@@ -62,7 +62,7 @@ _agent_load_error: Optional[Exception] = None
 def _load_agent_background():
     global _agent_app, _agent_load_error
     try:
-        print("[agent] Building CLIP + FAISS agent from new_main_framework.build_app_agent()...")
+        print("[agent] Building CLIP + FAISS agent from backend.new_main_framework.build_app_agent()...")
         _agent_app = build_app_agent()
         print("[agent] Ready.")
     except Exception as exc:

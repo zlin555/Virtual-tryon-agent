@@ -18,10 +18,10 @@ pandas
 numpy
 huggingface_hub
 
-# Gradio UI (existing app.py)
+# Gradio UI (legacy backend/app.py)
 gradio
 
-# FastAPI backend (api_clip.py)
+# FastAPI backend (backend/api_clip.py)
 fastapi
 uvicorn[standard]
 python-multipart

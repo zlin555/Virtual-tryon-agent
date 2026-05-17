@@ -10,11 +10,24 @@ const NAV_LINKS = [
   { to: '/style', label: 'Style Explorer' },
 ]
 
+const USER_MENU_ITEMS = [
+  'Review History',
+  'Purchase History',
+  'Token Purchase',
+  'Settings',
+]
+
 export default function Navbar() {
   const { pathname } = useLocation()
   const { looks, removeLook } = useSavedLooks()
   const { user, logout } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+
+  const handleLogout = () => {
+    setUserMenuOpen(false)
+    logout()
+  }
 
   return (
     <>
@@ -49,12 +62,82 @@ export default function Navbar() {
 
         <div className="flex items-center gap-4">
           {user ? (
-            <div className="hidden sm:flex items-center gap-3 text-sm" style={{ color: '#8C7B75' }}>
-              <span>{user.username}</span>
-              <button onClick={logout} className="transition-colors hover:text-[#C97B84]">
-                Logout
+            <>
+              <div className="relative">
+                <button
+                  onClick={() => setUserMenuOpen((open) => !open)}
+                  className="text-sm transition-colors duration-200"
+                  style={{ color: userMenuOpen ? '#C97B84' : '#8C7B75' }}
+                >
+                  {user.username}
+                </button>
+
+                <AnimatePresence>
+                  {userMenuOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      className="absolute right-0 top-9 w-64 rounded-xl overflow-hidden border z-50"
+                      style={{
+                        backgroundColor: '#FAF7F2',
+                        borderColor: '#E8B4BA',
+                        boxShadow: '0 18px 45px rgba(61,43,43,0.16)',
+                      }}
+                    >
+                      <div className="px-5 py-4 border-b" style={{ borderColor: '#E8B4BA' }}>
+                        <p className="font-serif text-lg" style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}>
+                          {user.username}
+                        </p>
+                        <p className="text-xs mt-1" style={{ color: '#8C7B75' }}>
+                          Style profile
+                        </p>
+                      </div>
+
+                      <div className="py-2">
+                        {USER_MENU_ITEMS.map((item) => (
+                          <button
+                            key={item}
+                            className="w-full text-left px-5 py-2.5 text-sm transition-colors hover:bg-[#F0EBE3]"
+                            style={{ color: '#3D3535' }}
+                            type="button"
+                          >
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="border-t py-2" style={{ borderColor: '#E8B4BA' }}>
+                        <button
+                          onClick={handleLogout}
+                          className="w-full text-left px-5 py-2.5 text-sm transition-colors hover:bg-[#F0EBE3]"
+                          style={{ color: '#C97B84' }}
+                          type="button"
+                        >
+                          Logout
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="relative text-sm transition-colors duration-200"
+                style={{ color: '#8C7B75' }}
+              >
+                Saved
+                {looks.length > 0 && (
+                  <span
+                    className="absolute -top-2 -right-3 w-4 h-4 rounded-full text-white text-[10px] flex items-center justify-center"
+                    style={{ backgroundColor: '#C97B84' }}
+                  >
+                    {looks.length}
+                  </span>
+                )}
               </button>
-            </div>
+            </>
           ) : (
             <div className="hidden sm:flex items-center gap-3 text-sm">
               <Link to="/login" style={{ color: pathname === '/login' ? '#C97B84' : '#8C7B75' }}>
@@ -69,27 +152,11 @@ export default function Navbar() {
               </Link>
             </div>
           )}
-
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="relative flex items-center gap-1.5 text-sm transition-colors duration-200"
-            style={{ color: '#8C7B75' }}
-          >
-            <span className="text-lg">Saved</span>
-            {looks.length > 0 && (
-              <span
-                className="absolute -top-1 -right-2 w-4 h-4 rounded-full text-white text-[10px] flex items-center justify-center"
-                style={{ backgroundColor: '#C97B84' }}
-              >
-                {looks.length}
-              </span>
-            )}
-          </button>
         </div>
       </header>
 
       <AnimatePresence>
-        {drawerOpen && (
+        {drawerOpen && user && (
           <>
             <motion.div
               key="backdrop"

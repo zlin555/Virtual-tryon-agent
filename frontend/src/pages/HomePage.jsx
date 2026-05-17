@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import useAuth from '../hooks/useAuth'
 
 const features = [
   {
@@ -33,8 +32,6 @@ const fadeUp = {
 }
 
 export default function HomePage() {
-  const { user } = useAuth()
-
   return (
     <div className="min-h-screen">
 
@@ -89,24 +86,6 @@ export default function HomePage() {
             transition={{ duration: 0.6, delay: 0.7 }}
             className="flex flex-col sm:flex-row gap-4 justify-center"
           >
-            {!user && (
-              <>
-                <Link
-                  to="/login"
-                  className="px-8 py-4 rounded-full font-medium transition-all duration-300 hover:scale-105"
-                  style={{ border: '1px solid rgba(255,255,255,0.3)', color: 'white' }}
-                >
-                  Login
-                </Link>
-                <Link
-                  to="/register"
-                  className="px-8 py-4 rounded-full text-white font-medium transition-all duration-300 hover:scale-105 hover:shadow-2xl"
-                  style={{ background: '#6B8CAE' }}
-                >
-                  Register
-                </Link>
-              </>
-            )}
             <Link
               to="/try-on"
               className="px-8 py-4 rounded-full text-white font-medium transition-all duration-300 hover:scale-105 hover:shadow-2xl"

@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import ImageInput from '../components/tryon/ImageInput'
 import useTryOn from '../hooks/useTryOn'
 import { useSavedLooks } from '../context/SavedLooksContext'
+import useAuth from '../hooks/useAuth'
 
 const GARMENT_TYPES = ['top', 'jacket', 'coat', 'dress', 'pants', 'skirt', 'shorts']
 
@@ -18,6 +19,7 @@ export default function TryOnPage() {
 
   const { status, resultUrl, message, runTryOn } = useTryOn()
   const { saveLook } = useSavedLooks()
+  const { user } = useAuth()
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -171,7 +173,7 @@ export default function TryOnPage() {
                     type="button"
                     onClick={() => saveLook(resultUrl)}
                     className="flex-1 py-3 rounded-full font-medium text-sm border transition-all duration-300 hover:scale-105"
-                    style={{ borderColor: '#C97B84', color: '#C97B84' }}
+                    style={{ borderColor: '#C97B84', color: '#C97B84', display: user ? 'block' : 'none' }}
                   >
                     ♡ Save to Looks
                   </button>

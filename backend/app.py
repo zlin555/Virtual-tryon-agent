@@ -2,7 +2,7 @@
 Virtual Try-On Agent — Gradio UI
 
 Run:
-    python app.py
+    python -m backend.app
 """
 
 from __future__ import annotations
@@ -22,9 +22,8 @@ except ImportError:
 
 import gradio as gr
 
-# Make sure we can import from the same directory
-sys.path.insert(0, str(Path(__file__).parent))
-from new_main_framework import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from backend.new_main_framework import (
     FashnTryOnService,
     TryOnInput,
     build_app_agent,

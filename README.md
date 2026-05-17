@@ -1,6 +1,6 @@
 ---
 title: Virtual Try-On Agent
-emoji: 👗
+emoji: 馃憲
 colorFrom: pink
 colorTo: indigo
 sdk: docker
@@ -19,7 +19,7 @@ The current repository uses one FastAPI backend entry point:
 
 | Entry point | Framework | Purpose |
 |---|---|---|
-| `api_clip.py` | `new_main_framework.py` | Full virtual try-on shopping assistant with LLM preference summarization, CLIP + FAISS retrieval, optional reference style images, and try-on integration |
+| `backend/api_clip.py` | `backend/new_main_framework.py` | Full virtual try-on shopping assistant with LLM preference summarization, CLIP + FAISS retrieval, optional reference style images, and try-on integration |
 
 ```text
 Browser (React + Vite, :5173)
@@ -27,9 +27,9 @@ Browser (React + Vite, :5173)
         v
 FastAPI backend (:8000 locally, :7860 on Hugging Face Spaces)
         |
-        +-- api_clip.py
+        +-- backend/api_clip.py
                 |
-                +-- new_main_framework.py
+                +-- backend/new_main_framework.py
                         |
                         +-- LangGraph ReAct Agent (GPT-4.1-mini)
                                 |
@@ -75,13 +75,13 @@ This project is divided across four roles:
 
 ## Features
 
-- **Style Explorer** — describe your style, select aesthetics and occasions, and get recommended fashion products from the catalog
-- **LLM Preference Summarization Pipeline** — `api_clip.py` summarizes user preference into `search_query`, `category`, and `style_note`, then performs CLIP + FAISS retrieval
-- **Reference Style Image Support** — the backend can accept `style_image_url` and use it as additional context during preference summarization
-- **Gender-aware filtering** — retrieval supports explicit gender fields such as `Gender: Men`, `Gender: Women`, and `Gender: Unisex`
-- **Virtual Try-On** — upload your photo and any garment image; FASHN API generates a photo-realistic overlay
-- **Image upload** — drag-and-drop or paste a URL; uploaded images can be hosted publicly for try-on compatibility
-- **Plug-and-play backend design** — try-on and search services are wrapped behind service interfaces so they can be replaced without changing the frontend
+- **Style Explorer** - describe your style, select aesthetics and occasions, and get recommended fashion products from the catalog
+- **LLM Preference Summarization Pipeline** - `backend/api_clip.py` summarizes user preference into `search_query`, `category`, and `style_note`, then performs CLIP + FAISS retrieval
+- **Reference Style Image Support** - the backend can accept `style_image_url` and use it as additional context during preference summarization
+- **Gender-aware filtering** - retrieval supports explicit gender fields such as `Gender: Men`, `Gender: Women`, and `Gender: Unisex`
+- **Virtual Try-On** - upload your photo and any garment image; FASHN API generates a photo-realistic overlay
+- **Image upload** - drag-and-drop or paste a URL; uploaded images can be hosted publicly for try-on compatibility
+- **Plug-and-play backend design** - try-on and search services are wrapped behind service interfaces so they can be replaced without changing the frontend
 
 ---
 
@@ -92,7 +92,7 @@ This project is divided across four roles:
 ```bash
 git clone https://github.com/wsylxy/Virtual-tryon-agent.git
 cd Virtual-tryon-agent
-pip install -r requirements.txt
+pip install - r requirements.txt
 ```
 
 ### 2. Set API keys
@@ -107,20 +107,20 @@ Edit `.env` with your keys.
 
 ```bash
 # From the project root (Virtual-tryon-agent/)
-OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false uvicorn api_clip:app --host 0.0.0.0 --port 8000
+OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false uvicorn backend.api_clip:app - -host 0.0.0.0 - -port 8000
 ```
 
 The backend path is:
 
 ```text
-api_clip.py
--> new_main_framework.py
+backend/api_clip.py
+-> backend/new_main_framework.py
 -> summarize_preference
 -> ProductRetrievalService
 -> CLIP + FAISS retrieval
 ```
 
-> **Do not use `--reload`** — it spawns two processes and can cause out-of-memory kills when CLIP and embedding arrays are loaded twice.
+> **Do not use `--reload`** - it spawns two processes and can cause out-of-memory kills when CLIP and embedding arrays are loaded twice.
 
 The API is ready when you see `[agent] Ready.` in the terminal. Verify:
 
@@ -153,12 +153,12 @@ app_port: 7860
 The Docker container starts the FastAPI backend with:
 
 ```bash
-uvicorn api_clip:app --host 0.0.0.0 --port 7860
+uvicorn backend.api_clip:app - -host 0.0.0.0 - -port 7860
 ```
 
 ### Required Space Secrets
 
-Set these in **Hugging Face Space Settings -> Secrets**. Do not commit real key values into the repository.
+Set these in **Hugging Face Space Settings - > Secrets**. Do not commit real key values into the repository.
 
 | Secret | Required | Purpose |
 |---|---|---|
@@ -171,7 +171,7 @@ Set these in **Hugging Face Space Settings -> Secrets**. Do not commit real key 
 
 ### Required Space Variables
 
-Set these in **Hugging Face Space Settings -> Variables**.
+Set these in **Hugging Face Space Settings - > Variables**.
 
 | Variable | Recommended value | Purpose |
 |---|---|---|
@@ -192,7 +192,7 @@ final_text_features.npy
 You can provide them in either of two ways:
 
 1. Upload both `.npy` files directly to the Hugging Face Space repository, preferably with Git LFS.
-2. Upload both files to a Hugging Face Dataset or Model repo and set `HF_FEATURES_REPO_ID`. If the files are missing locally, `new_main_framework.py` will download them with `huggingface_hub`.
+2. Upload both files to a Hugging Face Dataset or Model repo and set `HF_FEATURES_REPO_ID`. If the files are missing locally, `backend/new_main_framework.py` will download them with `huggingface_hub`.
 
 Local development already expects these files in the project root.
 
@@ -267,15 +267,15 @@ If category + gender filtering is too strict, the service falls back to broader 
 
 ---
 
-## Backend: `api_clip.py`
+## Backend: `backend/api_clip.py`
 
-`api_clip.py` is the FastAPI backend.
+`backend/api_clip.py` is the FastAPI backend.
 
 It uses:
 
 ```text
-api_clip.py
--> new_main_framework.py
+backend/api_clip.py
+-> backend/new_main_framework.py
 -> summarize_preference
 -> search_fashion_images
 -> ProductRetrievalService
@@ -310,9 +310,9 @@ Agent chat request schema:
 
 An alternative Replicate IDM-VTON backend, `ReplicateTryOnService`, is also implemented. `_resolve_tryon_service()` selects the active backend based on which environment variable is set:
 
-1. `FASHN_API_KEY` -> `FashnTryOnService`
-2. `REPLICATE_API_TOKEN` -> `ReplicateTryOnService`
-3. neither set -> `VirtualTryOnStub`
+1. `FASHN_API_KEY` - > `FashnTryOnService`
+2. `REPLICATE_API_TOKEN` - > `ReplicateTryOnService`
+3. neither set - > `VirtualTryOnStub`
 
 ---
 
@@ -320,23 +320,32 @@ An alternative Replicate IDM-VTON backend, `ReplicateTryOnService`, is also impl
 
 ```text
 Virtual-tryon-agent/
-├── api_clip.py              # FastAPI server; uses new_main_framework.py
-├── new_main_framework.py    # Agent, summarize_preference, CLIP+FAISS retrieval, try-on services
-├── app.py                   # Legacy Gradio UI or experimental app entry
-├── cleaned_data.csv         # Product catalog
-├── final_image_features.npy # CLIP image embeddings, not in repo due to file size
-├── final_text_features.npy  # CLIP text embeddings, not in repo due to file size
-├── requirements.txt
-├── .env.example
-└── frontend/                # React + Vite + Tailwind CSS
-    ├── src/
-    │   ├── pages/           # HomePage, StylePage, TryOnPage
-    │   ├── hooks/           # useAgentChat, useTryOn
-    │   ├── context/         # SavedLooksContext
-    │   ├── components/
-    │   └── api/client.js    # Axios instance
-    └── vite.config.js       # Proxies /api to VITE_API_URL or localhost:8000
+|-- backend/
+|   |-- api_clip.py           # FastAPI server
+|   |-- new_main_framework.py # Agent, summarize_preference, CLIP+FAISS retrieval, try-on services
+|   |-- app.py                # Legacy Gradio UI or experimental app entry
+|   |-- auth.py               # Register/login, password hashing, JWT auth
+|   |-- database.py           # SQLAlchemy engine/session setup
+|   |-- models.py             # Database models
+|   `-- __init__.py
+|-- cleaned_data.csv          # Product catalog
+|-- final_image_features.npy  # CLIP image embeddings, not in repo due to file size
+|-- final_text_features.npy   # CLIP text embeddings, not in repo due to file size
+|-- requirements.txt
+|-- Dockerfile
+|-- .env.example
+`-- frontend/                 # React + Vite + Tailwind CSS
+    |-- src/
+    |   |-- pages/            # HomePage, StylePage, TryOnPage, AuthPage
+    |   |-- hooks/            # useAgentChat, useTryOn, useAuth
+    |   |-- context/          # SavedLooksContext, AuthContext
+    |   |-- components/
+    |   `-- api/client.js     # Axios instance
+    `-- vite.config.js        # Proxies /api to VITE_API_URL or localhost:8000
 ```
+
+Previous root-level backend files have been moved into `backend/`; use `backend.api_clip:app` as the FastAPI entry point.
+
 
 ---
 

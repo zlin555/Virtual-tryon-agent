@@ -5,6 +5,7 @@ import { useDropzone } from 'react-dropzone'
 import api from '../api/client'
 import useAgentChat from '../hooks/useAgentChat'
 import { useSavedLooks } from '../context/SavedLooksContext'
+import useAuth from '../hooks/useAuth'
 
 const AESTHETICS = [
   'Minimalist', 'Streetwear', 'Bohemian', 'Preppy', 'Dark Academia',
@@ -64,7 +65,7 @@ function ImageCell({ onFile }) {
 }
 
 // ── Recommendation Card ───────────────────────────────────────────────────────
-function RecommendationCard({ rec, onTryOn, onSave }) {
+function RecommendationCard({ rec, onTryOn, onSave, canSave }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
@@ -98,7 +99,7 @@ function RecommendationCard({ rec, onTryOn, onSave }) {
           <button
             onClick={() => onSave(rec.image_url || rec.imageUrl)}
             className="flex-1 py-1.5 rounded-full text-xs border transition-all duration-200 hover:scale-105"
-            style={{ borderColor: '#C97B84', color: '#C97B84' }}
+            style={{ borderColor: '#C97B84', color: '#C97B84', display: canSave ? 'block' : 'none' }}
           >
             ♡ Save
           </button>
@@ -145,6 +146,7 @@ function StyleDNACard({ keywords }) {
 export default function StylePage() {
   const navigate = useNavigate()
   const { saveLook } = useSavedLooks()
+  const { user } = useAuth()
   const { history, recommendations, styleDNA, loading, warmingUp, sendMessage } = useAgentChat()
 
   const [description, setDescription] = useState('')
@@ -170,7 +172,7 @@ export default function StylePage() {
       genderText,
       aestheticsText,
       occasionsText,
-      'Based on this, analyze my style profile and recommend 6 outfits that match these preferences.',
+      'Based on this, analyze my style profile and recommend 9 outfits that match these preferences.',
     ].filter(Boolean).join(' ')
 
     // Pass the first uploaded reference image URL for visual analysis by the backend
@@ -362,6 +364,7 @@ export default function StylePage() {
                   rec={rec}
                   onTryOn={handleTryOn}
                   onSave={saveLook}
+                  canSave={Boolean(user)}
                 />
               ))}
             </div>
