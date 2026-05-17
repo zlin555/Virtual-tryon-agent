@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSavedLooks } from '../../context/SavedLooksContext'
@@ -10,23 +10,257 @@ const NAV_LINKS = [
   { to: '/style', label: 'Style Explorer' },
 ]
 
+const USER_VIEWS = {
+  overview: {
+    title: 'Profile Home',
+    subtitle: 'A quiet home base for your style identity and account tools.',
+    cards: [
+      { title: 'Style signals', body: 'Preference memory, compacted style traits, and future saved summaries will land here.' },
+      { title: 'Recent activity', body: 'Your latest try-ons, saves, and recommendation sessions will be surfaced in one timeline.' },
+    ],
+  },
+  reviewHistory: {
+    title: 'Review History',
+    subtitle: 'This section will collect the looks you explored, compared, and revisited.',
+    cards: [
+      { title: 'Product revisits', body: 'We will keep a browsable history of recommendation cards and try-on entries.' },
+      { title: 'Preference drift', body: 'You will be able to see how your taste changes over time across seasons and moods.' },
+    ],
+  },
+  purchaseHistory: {
+    title: 'Purchase History',
+    subtitle: 'A future account page for order-linked outfits and post-purchase tracking.',
+    cards: [
+      { title: 'Closet trail', body: 'Purchased items can later connect to your saved looks and long-term preference memory.' },
+      { title: 'Wear again ideas', body: 'We can use past purchases to recommend styling companions instead of starting from zero.' },
+    ],
+  },
+  tokenPurchase: {
+    title: 'Token Purchase',
+    subtitle: 'A future credits page for try-on generations, premium memory, or faster recommendation loops.',
+    cards: [
+      { title: 'Usage snapshot', body: 'Token balances, try-on consumption, and upgrade paths can live in this module.' },
+      { title: 'Plan design', body: 'This page is a placeholder so the navigation already has a stable home for billing later.' },
+    ],
+  },
+  settings: {
+    title: 'Settings',
+    subtitle: 'A lightweight preferences area for avatar, notifications, and future account controls.',
+    cards: [
+      { title: 'Profile appearance', body: 'Avatar, display name polish, and visual account settings can be managed here.' },
+      { title: 'Memory controls', body: 'Later this can expose preference-memory review, deletion, and retention settings.' },
+    ],
+  },
+}
+
 const USER_MENU_ITEMS = [
-  'Review History',
-  'Purchase History',
-  'Token Purchase',
-  'Settings',
+  { key: 'reviewHistory', label: 'Review History' },
+  { key: 'purchaseHistory', label: 'Purchase History' },
+  { key: 'tokenPurchase', label: 'Token Purchase' },
+  { key: 'settings', label: 'Settings' },
 ]
+
+function UserAvatar({ profile, username, size = 'md' }) {
+  const sizeClass = size === 'lg' ? 'w-14 h-14 text-lg' : 'w-9 h-9 text-sm'
+
+  if (profile?.avatarImage) {
+    return (
+      <img
+        src={profile.avatarImage}
+        alt={`${username} avatar`}
+        className={`${sizeClass} rounded-full object-cover border border-white/60`}
+      />
+    )
+  }
+
+  return (
+    <div
+      className={`${sizeClass} rounded-full flex items-center justify-center font-semibold text-white`}
+      style={{ backgroundColor: profile?.avatarColor || '#C97B84' }}
+    >
+      {profile?.initials || username?.slice(0, 2)?.toUpperCase() || '?'}
+    </div>
+  )
+}
+
+function ProfileOverview({ activeView, avatarNotice, onSelectView, onAvatarUpload, onAvatarRemove }) {
+  const view = USER_VIEWS[activeView]
+  const isOverview = activeView === 'overview'
+
+  return (
+    <div className="px-5 pb-5">
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        {USER_MENU_ITEMS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => onSelectView(item.key)}
+            className="rounded-full px-3 py-2 text-xs transition-colors duration-200"
+            style={{
+              backgroundColor: activeView === item.key ? '#E8B4BA' : '#F4EEE6',
+              color: activeView === item.key ? '#5C3640' : '#7B6A64',
+            }}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        className="rounded-2xl p-4 border"
+        style={{
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(244,238,230,0.92) 100%)',
+          borderColor: '#E8D7CC',
+        }}
+      >
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.25em]" style={{ color: '#C97B84' }}>
+              {isOverview ? 'Account Studio' : 'Workspace Preview'}
+            </p>
+            <h3
+              className="mt-2 text-2xl font-serif leading-tight"
+              style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}
+            >
+              {view.title}
+            </h3>
+            <p className="mt-2 text-sm leading-6" style={{ color: '#6E615C' }}>
+              {view.subtitle}
+            </p>
+          </div>
+
+          <span
+            className="shrink-0 rounded-full px-3 py-1 text-[11px]"
+            style={{ backgroundColor: '#F7D7DB', color: '#8C4C59' }}
+          >
+            Coming Soon
+          </span>
+        </div>
+
+        {isOverview && (
+          <div className="mb-4 p-3 rounded-2xl" style={{ backgroundColor: '#FBF8F4' }}>
+            <div className="flex items-center gap-3">
+              <label
+                className="cursor-pointer rounded-full px-3 py-2 text-xs transition-colors"
+                style={{ backgroundColor: '#1A1A1A', color: '#FAF7F2' }}
+              >
+                Upload avatar
+                <input type="file" accept="image/*" className="hidden" onChange={onAvatarUpload} />
+              </label>
+              <button
+                type="button"
+                onClick={onAvatarRemove}
+                className="rounded-full px-3 py-2 text-xs border transition-colors"
+                style={{ borderColor: '#E8B4BA', color: '#8C7B75' }}
+              >
+                Remove image
+              </button>
+            </div>
+            <p className="mt-3 text-xs leading-5" style={{ color: '#8C7B75' }}>
+              Avatar images are stored locally in this browser for now, so smaller files work best.
+            </p>
+            {avatarNotice && (
+              <p className="mt-2 text-xs leading-5" style={{ color: '#B05B68' }}>
+                {avatarNotice}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {view.cards.map((card) => (
+            <div
+              key={card.title}
+              className="rounded-2xl p-4 border"
+              style={{ backgroundColor: '#FFFCF9', borderColor: '#EDE2D8' }}
+            >
+              <p className="text-sm font-medium" style={{ color: '#3D3535' }}>
+                {card.title}
+              </p>
+              <p className="mt-2 text-sm leading-6" style={{ color: '#7B6A64' }}>
+                {card.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function Navbar() {
   const { pathname } = useLocation()
   const { looks, removeLook } = useSavedLooks()
-  const { user, logout } = useAuth()
+  const { user, profile, logout, updateProfile } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [activeView, setActiveView] = useState('overview')
+  const [avatarNotice, setAvatarNotice] = useState('')
+  const menuRef = useRef(null)
+
+  useEffect(() => {
+    if (!userMenuOpen) return undefined
+
+    const handlePointerDown = (event) => {
+      if (!menuRef.current?.contains(event.target)) {
+        setUserMenuOpen(false)
+        setActiveView('overview')
+      }
+    }
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setUserMenuOpen(false)
+        setActiveView('overview')
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('touchstart', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [userMenuOpen])
 
   const handleLogout = () => {
     setUserMenuOpen(false)
+    setActiveView('overview')
     logout()
+  }
+
+  const handleAvatarUpload = (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (file.size > 1024 * 1024) {
+      setAvatarNotice('Please upload an image smaller than 1 MB for now.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setAvatarNotice('')
+        updateProfile({ avatarImage: reader.result })
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleAvatarRemove = () => {
+    setAvatarNotice('')
+    updateProfile({ avatarImage: null })
+  }
+
+  const toggleUserMenu = () => {
+    setUserMenuOpen((open) => {
+      if (open) setActiveView('overview')
+      return !open
+    })
   }
 
   return (
@@ -63,55 +297,75 @@ export default function Navbar() {
         <div className="flex items-center gap-4">
           {user ? (
             <>
-              <div className="relative">
+              <div className="relative" ref={menuRef}>
                 <button
-                  onClick={() => setUserMenuOpen((open) => !open)}
-                  className="text-sm transition-colors duration-200"
-                  style={{ color: userMenuOpen ? '#C97B84' : '#8C7B75' }}
+                  type="button"
+                  onClick={toggleUserMenu}
+                  className="flex items-center gap-3 rounded-full pl-1 pr-3 py-1 transition-all duration-200"
+                  style={{
+                    backgroundColor: userMenuOpen ? '#F4EEE6' : 'transparent',
+                    color: '#3D3535',
+                  }}
                 >
-                  {user.username}
+                  <UserAvatar profile={profile} username={user.username} />
+                  <div className="hidden sm:block text-left">
+                    <p className="text-sm leading-4">{user.username}</p>
+                    <p className="text-[11px] leading-4" style={{ color: '#8C7B75' }}>
+                      Profile
+                    </p>
+                  </div>
                 </button>
 
                 <AnimatePresence>
                   {userMenuOpen && (
                     <motion.div
-                      initial={{ opacity: 0, y: -8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      className="absolute right-0 top-9 w-64 rounded-xl overflow-hidden border z-50"
+                      initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                      transition={{ duration: 0.18 }}
+                      className="absolute right-0 top-12 w-[24rem] rounded-[28px] overflow-hidden border z-50"
                       style={{
                         backgroundColor: '#FAF7F2',
-                        borderColor: '#E8B4BA',
-                        boxShadow: '0 18px 45px rgba(61,43,43,0.16)',
+                        borderColor: '#E8D7CC',
+                        boxShadow: '0 24px 60px rgba(61,43,43,0.18)',
                       }}
                     >
-                      <div className="px-5 py-4 border-b" style={{ borderColor: '#E8B4BA' }}>
-                        <p className="font-serif text-lg" style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}>
-                          {user.username}
-                        </p>
-                        <p className="text-xs mt-1" style={{ color: '#8C7B75' }}>
-                          Style profile
-                        </p>
+                      <div
+                        className="px-5 pt-5 pb-4 border-b"
+                        style={{
+                          borderColor: '#E8D7CC',
+                          background: 'radial-gradient(circle at top left, rgba(201,123,132,0.22), transparent 46%), linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(250,247,242,1) 100%)',
+                        }}
+                      >
+                        <div className="flex items-center gap-4">
+                          <UserAvatar profile={profile} username={user.username} size="lg" />
+                          <div className="min-w-0">
+                            <p
+                              className="font-serif text-2xl truncate"
+                              style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}
+                            >
+                              {user.username}
+                            </p>
+                            <p className="text-sm mt-1" style={{ color: '#8C7B75' }}>
+                              Your personal style workspace
+                            </p>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="py-2">
-                        {USER_MENU_ITEMS.map((item) => (
-                          <button
-                            key={item}
-                            className="w-full text-left px-5 py-2.5 text-sm transition-colors hover:bg-[#F0EBE3]"
-                            style={{ color: '#3D3535' }}
-                            type="button"
-                          >
-                            {item}
-                          </button>
-                        ))}
-                      </div>
+                      <ProfileOverview
+                        activeView={activeView}
+                        avatarNotice={avatarNotice}
+                        onSelectView={setActiveView}
+                        onAvatarUpload={handleAvatarUpload}
+                        onAvatarRemove={handleAvatarRemove}
+                      />
 
-                      <div className="border-t py-2" style={{ borderColor: '#E8B4BA' }}>
+                      <div className="px-5 pb-5">
                         <button
                           onClick={handleLogout}
-                          className="w-full text-left px-5 py-2.5 text-sm transition-colors hover:bg-[#F0EBE3]"
-                          style={{ color: '#C97B84' }}
+                          className="w-full rounded-full px-4 py-3 text-sm transition-colors"
+                          style={{ backgroundColor: '#1A1A1A', color: '#FAF7F2' }}
                           type="button"
                         >
                           Logout
