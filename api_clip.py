@@ -51,7 +51,7 @@ _agent_load_error: Optional[Exception] = None
 def _load_agent_background():
     global _agent_app, _agent_load_error
     try:
-        print("[agent] Building ORIGINAL CLIP + FAISS agent from main_framework.build_app_agent()...")
+        print("[agent] Building CLIP + FAISS agent from new_main_framework.build_app_agent()...")
         _agent_app = build_app_agent()
         print("[agent] Ready.")
     except Exception as exc:

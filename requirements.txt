@@ -16,7 +16,7 @@ numpy
 # Gradio UI (existing app.py)
 gradio
 
-# FastAPI backend (api.py)
+# FastAPI backend (api_clip.py)
 fastapi
 uvicorn[standard]
 python-multipart

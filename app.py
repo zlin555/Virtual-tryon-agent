@@ -24,7 +24,7 @@ import gradio as gr
 
 # Make sure we can import from the same directory
 sys.path.insert(0, str(Path(__file__).parent))
-from main_framework import (
+from new_main_framework import (
     FashnTryOnService,
     TryOnInput,
     build_app_agent,

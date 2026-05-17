@@ -6,12 +6,11 @@ An AI-powered virtual fashion shopping assistant built with **LangChain / LangGr
 
 ## Architecture
 
-The current repository contains two backend entry points. Both use **CLIP + FAISS** for product retrieval, but they are used for different evaluation purposes:
+The current repository uses one FastAPI backend entry point:
 
-| Version | Entry point | Framework | Purpose |
-|---|---|---|---|
-| **Baseline** | `api.py` | `main_framework.py` | Baseline comparison: direct agent retrieval with CLIP + FAISS |
-| **Full Pipeline / Improved Version** | `api_clip.py` | `new_main_framework.py` | Adds LLM preference summarization before CLIP + FAISS retrieval |
+| Entry point | Framework | Purpose |
+|---|---|---|
+| `api_clip.py` | `new_main_framework.py` | Full virtual try-on shopping assistant with LLM preference summarization, CLIP + FAISS retrieval, optional reference style images, and try-on integration |
 
 ```text
 Browser (React + Vite, :5173)
@@ -19,70 +18,40 @@ Browser (React + Vite, :5173)
         v
 FastAPI backend (:8000)
         |
-        +-- Baseline: api.py
-        |       |
-        |       +-- LangGraph ReAct Agent (GPT-4.1-mini)
-        |               |
-        |               +-- search_fashion_images
-        |               |       |
-        |               |       +-- ProductRetrievalService
-        |               |               |
-        |               |               +-- CLIP text encoder
-        |               |               +-- FAISS over precomputed product image embeddings
-        |               |
-        |               +-- virtual_tryon
-        |                       |
-        |                       +-- FashnTryOnService / ReplicateTryOnService
-        |
-        +-- Full Pipeline: api_clip.py
+        +-- api_clip.py
                 |
-                +-- LangGraph ReAct Agent (GPT-4.1-mini)
+                +-- new_main_framework.py
                         |
-                        +-- summarize_preference
-                        |       |
-                        |       +-- Extracts search_query, category, style_note
-                        |       +-- Supports optional reference style image URL
-                        |
-                        +-- search_fashion_images
-                        |       |
-                        |       +-- ProductRetrievalService
-                        |               |
-                        |               +-- CLIP text encoder
-                        |               +-- FAISS over precomputed product image embeddings
-                        |
-                        +-- virtual_tryon
+                        +-- LangGraph ReAct Agent (GPT-4.1-mini)
                                 |
-                                +-- FashnTryOnService / ReplicateTryOnService
+                                +-- summarize_preference
+                                |       |
+                                |       +-- extracts search_query, category, style_note
+                                |       +-- supports optional reference style image URL
+                                |
+                                +-- search_fashion_images
+                                |       |
+                                |       +-- ProductRetrievalService
+                                |               |
+                                |               +-- CLIP text encoder
+                                |               +-- FAISS over precomputed product image embeddings
+                                |
+                                +-- virtual_tryon
+                                        |
+                                        +-- FashnTryOnService / ReplicateTryOnService
 ```
 
-### Baseline vs. Full Pipeline
-
-The baseline is **not keyword search**. In the current code, `api.py` also uses `ProductRetrievalService`, which loads CLIP features, builds a FAISS index, encodes the user query with CLIP, and retrieves visually relevant products.
-
-The main difference is:
+Recommendation flow:
 
 ```text
-Baseline:
-User message
-→ LangGraph agent
-→ search_fashion_images
-→ CLIP query embedding
-→ FAISS product image retrieval
-→ recommendation results
-```
-
-```text
-Full Pipeline / Improved Version:
 User message + optional reference style image
-→ summarize_preference
-→ structured search_query + category + style_note
-→ search_fashion_images
-→ CLIP query embedding
-→ FAISS product image retrieval
-→ recommendation results
+-> summarize_preference
+-> structured search_query + category + style_note
+-> search_fashion_images
+-> CLIP query embedding
+-> FAISS product image retrieval
+-> recommendation results
 ```
-
-In other words, `api.py` is used as the **baseline comparison**, while `api_clip.py` is the **improved pipeline** that adds an explicit LLM-based preference summarization step before retrieval.
 
 This project is divided across four roles:
 
@@ -97,10 +66,9 @@ This project is divided across four roles:
 
 ## Features
 
-- **Style Explorer** — describe your style, select aesthetics and occasions, and get recommended fashion products from the Myntra-style product catalog
-- **Baseline CLIP + FAISS Retrieval** — `api.py` directly uses the user request with the agent and retrieves products through CLIP + FAISS
-- **LLM Preference Summarization Pipeline** — `api_clip.py` first summarizes user preference into `search_query`, `category`, and `style_note`, then performs CLIP + FAISS retrieval
-- **Reference Style Image Support** — the improved pipeline can accept `style_image_url` and use it as additional context during preference summarization
+- **Style Explorer** — describe your style, select aesthetics and occasions, and get recommended fashion products from the catalog
+- **LLM Preference Summarization Pipeline** — `api_clip.py` summarizes user preference into `search_query`, `category`, and `style_note`, then performs CLIP + FAISS retrieval
+- **Reference Style Image Support** — the backend can accept `style_image_url` and use it as additional context during preference summarization
 - **Gender-aware filtering** — retrieval supports explicit gender fields such as `Gender: Men`, `Gender: Women`, and `Gender: Unisex`
 - **Virtual Try-On** — upload your photo and any garment image; FASHN API generates a photo-realistic overlay
 - **Image upload** — drag-and-drop or paste a URL; uploaded images can be hosted publicly for try-on compatibility
@@ -126,42 +94,21 @@ cp .env.example .env
 
 Edit `.env` with your keys.
 
-### 3. Start the baseline backend
-
-Use this version when you want to run the **baseline comparison**.
-
-```bash
-# From the project root (Virtual-tryon-agent/)
-OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false uvicorn api:app --host 0.0.0.0 --port 8000
-```
-
-The baseline path is:
-
-```text
-api.py
-→ main_framework.py
-→ LangGraph agent
-→ ProductRetrievalService
-→ CLIP + FAISS retrieval
-```
-
-### 4. Start the full pipeline backend
-
-Use this version when you want to run the **improved full pipeline**.
+### 3. Start the backend
 
 ```bash
 # From the project root (Virtual-tryon-agent/)
 OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false uvicorn api_clip:app --host 0.0.0.0 --port 8000
 ```
 
-The full pipeline path is:
+The backend path is:
 
 ```text
 api_clip.py
-→ new_main_framework.py
-→ summarize_preference
-→ ProductRetrievalService
-→ CLIP + FAISS retrieval
+-> new_main_framework.py
+-> summarize_preference
+-> ProductRetrievalService
+-> CLIP + FAISS retrieval
 ```
 
 > **Do not use `--reload`** — it spawns two processes and can cause out-of-memory kills when CLIP and embedding arrays are loaded twice.
@@ -173,7 +120,7 @@ curl http://localhost:8000/api/health
 curl http://localhost:8000/api/ready
 ```
 
-### 5. Start the frontend
+### 4. Start the frontend
 
 ```bash
 cd frontend
@@ -181,7 +128,7 @@ npm install
 npm run dev
 ```
 
-Opens at **http://localhost:5173**
+Opens at **http://localhost:5173**.
 
 ---
 
@@ -191,9 +138,7 @@ Opens at **http://localhost:5173**
 
 Describe your personal style, select aesthetic chips such as Minimalist, Streetwear, or Punk, and occasion chips such as Date Night, Work, or Party, then click **Analyze My Style**.
 
-The agent returns outfit cards with real product images from the fashion catalog. Click any card to jump to the Try-On page with that garment pre-filled.
-
-When the backend is `api.py`, the request goes through the baseline CLIP + FAISS retrieval flow. When the backend is `api_clip.py`, the request first goes through LLM preference summarization before retrieval.
+The agent first extracts a structured style preference, then returns outfit cards with real product images from the fashion catalog. Click any card to jump to the Try-On page with that garment pre-filled.
 
 ### Virtual Try-On (`/tryon`)
 
@@ -214,8 +159,8 @@ Retrieval is powered by a Myntra-style fashion dataset and precomputed CLIP embe
 | File | Description |
 |------|-------------|
 | `cleaned_data.csv` | Product catalog: ID, name, category, gender, color, usage, image URL |
-| `final_image_features.npy` | CLIP image embeddings for product images — not included in repo due to file size |
-| `final_text_features.npy` | CLIP text embeddings — loaded by the retrieval service, but runtime search mainly compares query text embeddings with image embeddings |
+| `final_image_features.npy` | CLIP image embeddings for product images; not included in repo due to file size |
+| `final_text_features.npy` | CLIP text embeddings; loaded by the retrieval service, but runtime search mainly compares query text embeddings with image embeddings |
 
 > **Note:** `final_image_features.npy` and `final_text_features.npy` are excluded from the GitHub repository due to their large file size. You must obtain them separately, for example from a team member or by re-running the CLIP feature extraction script, and place them in the project root before starting the backend.
 
@@ -256,53 +201,22 @@ If category + gender filtering is too strict, the service falls back to broader 
 
 ---
 
-## Baseline: `api.py`
+## Backend: `api_clip.py`
 
-`api.py` is used as the **baseline comparison backend**.
-
-It uses:
-
-```text
-api.py
-→ main_framework.py
-→ build_app_agent()
-→ ProductRetrievalService
-→ CLIP + FAISS retrieval
-```
-
-The baseline still uses the LangGraph ReAct agent and the same retrieval tool, but it does not have the explicit `summarize_preference` tool. The user request is passed directly to the agent, and the agent calls `search_fashion_images` for product retrieval.
-
-Baseline request schema:
-
-```json
-{
-  "message": "Find me some minimalist black dresses. Gender: Women.",
-  "history": []
-}
-```
-
-Use the baseline to answer this evaluation question:
-
-> If we directly retrieve products from the user request using CLIP + FAISS, how good are the recommendations?
-
----
-
-## Full Pipeline: `api_clip.py`
-
-`api_clip.py` is the **improved full pipeline backend**.
+`api_clip.py` is the FastAPI backend.
 
 It uses:
 
 ```text
 api_clip.py
-→ new_main_framework.py
-→ summarize_preference
-→ search_fashion_images
-→ ProductRetrievalService
-→ CLIP + FAISS retrieval
+-> new_main_framework.py
+-> summarize_preference
+-> search_fashion_images
+-> ProductRetrievalService
+-> CLIP + FAISS retrieval
 ```
 
-The main addition is `summarize_preference`, which converts raw user input into structured retrieval fields:
+The main preference extraction tool is `summarize_preference`, which converts raw user input into structured retrieval fields:
 
 ```json
 {
@@ -312,7 +226,7 @@ The main addition is `summarize_preference`, which converts raw user input into 
 }
 ```
 
-Full pipeline request schema:
+Agent chat request schema:
 
 ```json
 {
@@ -322,10 +236,6 @@ Full pipeline request schema:
 }
 ```
 
-Use the full pipeline to answer this evaluation question:
-
-> Does explicit LLM preference summarization improve retrieval quality compared with directly sending the user request to CLIP + FAISS?
-
 ---
 
 ## Virtual Try-On Backend
@@ -334,9 +244,9 @@ Use the full pipeline to answer this evaluation question:
 
 An alternative Replicate IDM-VTON backend, `ReplicateTryOnService`, is also implemented. `_resolve_tryon_service()` selects the active backend based on which environment variable is set:
 
-1. `FASHN_API_KEY` → `FashnTryOnService`
-2. `REPLICATE_API_TOKEN` → `ReplicateTryOnService`
-3. neither set → `VirtualTryOnStub`
+1. `FASHN_API_KEY` -> `FashnTryOnService`
+2. `REPLICATE_API_TOKEN` -> `ReplicateTryOnService`
+3. neither set -> `VirtualTryOnStub`
 
 ---
 
@@ -344,10 +254,8 @@ An alternative Replicate IDM-VTON backend, `ReplicateTryOnService`, is also impl
 
 ```text
 Virtual-tryon-agent/
-├── api.py                   # Baseline FastAPI server; uses main_framework.py
-├── api_clip.py              # Full pipeline FastAPI server; uses new_main_framework.py
-├── main_framework.py        # Baseline agent, ProductRetrievalService, CLIP+FAISS, try-on services
-├── new_main_framework.py    # Improved agent with summarize_preference and style_image_url support
+├── api_clip.py              # FastAPI server; uses new_main_framework.py
+├── new_main_framework.py    # Agent, summarize_preference, CLIP+FAISS retrieval, try-on services
 ├── app.py                   # Legacy Gradio UI or experimental app entry
 ├── cleaned_data.csv         # Product catalog
 ├── final_image_features.npy # CLIP image embeddings, not in repo due to file size
@@ -368,7 +276,7 @@ Virtual-tryon-agent/
 
 ## API Endpoints
 
-Both backend versions expose the same main endpoints.
+The backend exposes these main endpoints.
 
 ### Health Check
 
@@ -390,16 +298,7 @@ The agent loads in a background thread. If `ready` is `false`, wait until CLIP, 
 POST /api/agent/chat
 ```
 
-Baseline request for `api.py`:
-
-```json
-{
-  "message": "Find me a black jacket for streetwear. Gender: Men.",
-  "history": []
-}
-```
-
-Full pipeline request for `api_clip.py`:
+Request:
 
 ```json
 {
@@ -494,23 +393,3 @@ axios framer-motion react-dropzone
 @tailwindcss/vite tailwindcss
 vite @vitejs/plugin-react
 ```
-
----
-
-## Evaluation Setup
-
-This repository can be evaluated as an ablation study:
-
-| Experiment | Backend | Retrieval | Preference summarization | Reference image |
-|---|---|---|---|---|
-| Baseline | `api.py` | CLIP + FAISS | No explicit summarization | No |
-| Full pipeline | `api_clip.py` | CLIP + FAISS | Yes, `summarize_preference` | Yes, optional `style_image_url` |
-
-Recommended comparison:
-
-1. Run the same text-only user request on `api.py`.
-2. Run the same request on `api_clip.py`.
-3. Compare whether the full pipeline produces a cleaner query, better category matching, and more relevant product results.
-4. Optionally add a reference style image to `api_clip.py` and compare whether visual style context improves recommendations.
-
-The purpose of this comparison is not to prove that FAISS is better than keyword search. Both backends already use CLIP + FAISS. The comparison is specifically about whether an LLM preference summarization layer improves retrieval quality.
