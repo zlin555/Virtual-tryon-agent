@@ -1,6 +1,6 @@
 ---
 title: Virtual Try-On Agent
-emoji: 馃憲
+emoji: 👗
 colorFrom: pink
 colorTo: indigo
 sdk: docker
