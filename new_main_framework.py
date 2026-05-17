@@ -40,6 +40,7 @@ import os
 import time
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 import pandas as pd
 import numpy as np
@@ -192,10 +193,38 @@ class UnsplashImageSearchStub(ImageSearchService):
                 )
             )
         return results
+
+
+def _resolve_feature_file(local_path: str) -> str:
+    """Return a local feature file, downloading it from the Hub when configured."""
+    path = Path(local_path)
+    if path.exists():
+        return str(path)
+
+    repo_id = os.getenv("HF_FEATURES_REPO_ID")
+    if not repo_id:
+        raise FileNotFoundError(
+            f"Missing feature file {local_path}. Place it in the project root or set "
+            "HF_FEATURES_REPO_ID to a Hugging Face repo containing this file."
+        )
+
+    from huggingface_hub import hf_hub_download
+
+    repo_type = os.getenv("HF_FEATURES_REPO_TYPE", "dataset")
+    revision = os.getenv("HF_FEATURES_REVISION")
+    return hf_hub_download(
+        repo_id=repo_id,
+        filename=path.name,
+        repo_type=repo_type,
+        revision=revision,
+    )
         
 class ProductRetrievalService(ImageSearchService):
     def __init__(self, products_csv, text_features_path, image_features_path):
         self.df = pd.read_csv(products_csv)
+
+        text_features_path = _resolve_feature_file(text_features_path)
+        image_features_path = _resolve_feature_file(image_features_path)
 
         self.text_features = np.load(text_features_path).astype("float32")
         self.image_features = np.load(image_features_path).astype("float32")

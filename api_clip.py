@@ -18,10 +18,10 @@ from pydantic import BaseModel
 
 from new_main_framework import (
     AgentRequest,
-    FashnTryOnService,
     TryOnInput,
     TryOnResult,
     build_app_agent,
+    _resolve_tryon_service,
 )
 
 app = FastAPI(title="Virtual Try-On Agent API - CLIP FAISS")
@@ -37,11 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FASHN_KEY = os.getenv("FASHN_API_KEY", "")
-if not FASHN_KEY:
-    raise EnvironmentError("FASHN_API_KEY not set. Check your .env file.")
-
-_tryon_svc = FashnTryOnService(api_key=FASHN_KEY)
+_tryon_svc = _resolve_tryon_service()
 
 _agent_app = None
 _agent_ready = threading.Event()

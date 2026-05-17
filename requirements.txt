@@ -12,6 +12,7 @@ torch
 torchvision
 pandas
 numpy
+huggingface_hub
 
 # Gradio UI (existing app.py)
 gradio

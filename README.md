@@ -1,3 +1,12 @@
+---
+title: Virtual Try-On Agent
+emoji: 👗
+colorFrom: pink
+colorTo: indigo
+sdk: docker
+app_port: 7860
+---
+
 # Virtual Try-On Agent
 
 An AI-powered virtual fashion shopping assistant built with **LangChain / LangGraph**, **OpenAI GPT-4.1-mini**, **CLIP + FAISS retrieval**, **FASHN API**, and a **React + Vite** frontend. Users describe their style in natural language, get outfit recommendations from a real fashion product dataset, and can virtually try on selected garments with their own photo.
@@ -16,7 +25,7 @@ The current repository uses one FastAPI backend entry point:
 Browser (React + Vite, :5173)
         |  REST  (/api/*)
         v
-FastAPI backend (:8000)
+FastAPI backend (:8000 locally, :7860 on Hugging Face Spaces)
         |
         +-- api_clip.py
                 |
@@ -129,6 +138,61 @@ npm run dev
 ```
 
 Opens at **http://localhost:5173**.
+
+---
+
+## Hugging Face Spaces Deployment
+
+This repository is ready to run as a **Docker Space**. The Space metadata is defined in the YAML block at the top of this README:
+
+```yaml
+sdk: docker
+app_port: 7860
+```
+
+The Docker container starts the FastAPI backend with:
+
+```bash
+uvicorn api_clip:app --host 0.0.0.0 --port 7860
+```
+
+### Required Space Secrets
+
+Set these in **Hugging Face Space Settings -> Secrets**. Do not commit real key values into the repository.
+
+| Secret | Required | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | Yes | GPT-4.1-mini agent and preference extraction |
+| `FASHN_API_KEY` | Recommended | FASHN cloud virtual try-on |
+| `IMGBB_API_KEY` | Recommended | Public image hosting for uploaded images |
+| `REPLICATE_API_TOKEN` | Optional | Alternative IDM-VTON backend |
+
+### Required Space Variables
+
+Set these in **Hugging Face Space Settings -> Variables**.
+
+| Variable | Recommended value | Purpose |
+|---|---|---|
+| `ALLOWED_ORIGINS` | `https://your-frontend-domain.com,http://localhost:5173` | Allows the deployed frontend to call the backend |
+| `HF_FEATURES_REPO_ID` | `your-username/your-features-dataset` | Optional fallback repo containing `final_image_features.npy` and `final_text_features.npy` |
+| `HF_FEATURES_REPO_TYPE` | `dataset` | Repo type for feature downloads; defaults to `dataset` |
+| `HF_FEATURES_REVISION` | `main` | Optional revision for feature downloads |
+
+### CLIP Feature Files
+
+The backend needs these files at startup:
+
+```text
+final_image_features.npy
+final_text_features.npy
+```
+
+You can provide them in either of two ways:
+
+1. Upload both `.npy` files directly to the Hugging Face Space repository, preferably with Git LFS.
+2. Upload both files to a Hugging Face Dataset or Model repo and set `HF_FEATURES_REPO_ID`. If the files are missing locally, `new_main_framework.py` will download them with `huggingface_hub`.
+
+Local development already expects these files in the project root.
 
 ---
 
