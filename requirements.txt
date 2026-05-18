@@ -8,6 +8,7 @@ sqlalchemy
 pymysql
 bcrypt
 python-jose[cryptography]
+redis
 
 # Product retrieval (teammate's ProductRetrievalService)
 faiss-cpu

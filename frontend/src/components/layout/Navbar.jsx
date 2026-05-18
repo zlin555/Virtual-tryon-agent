@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSavedLooks } from '../../context/SavedLooksContext'
 import useAuth from '../../hooks/useAuth'
@@ -10,54 +10,11 @@ const NAV_LINKS = [
   { to: '/style', label: 'Style Explorer' },
 ]
 
-const USER_VIEWS = {
-  overview: {
-    title: 'Profile Home',
-    subtitle: 'A quiet home base for your style identity and account tools.',
-    cards: [
-      { title: 'Style signals', body: 'Preference memory, compacted style traits, and future saved summaries will land here.' },
-      { title: 'Recent activity', body: 'Your latest try-ons, saves, and recommendation sessions will be surfaced in one timeline.' },
-    ],
-  },
-  reviewHistory: {
-    title: 'Review History',
-    subtitle: 'This section will collect the looks you explored, compared, and revisited.',
-    cards: [
-      { title: 'Product revisits', body: 'We will keep a browsable history of recommendation cards and try-on entries.' },
-      { title: 'Preference drift', body: 'You will be able to see how your taste changes over time across seasons and moods.' },
-    ],
-  },
-  purchaseHistory: {
-    title: 'Purchase History',
-    subtitle: 'A future account page for order-linked outfits and post-purchase tracking.',
-    cards: [
-      { title: 'Closet trail', body: 'Purchased items can later connect to your saved looks and long-term preference memory.' },
-      { title: 'Wear again ideas', body: 'We can use past purchases to recommend styling companions instead of starting from zero.' },
-    ],
-  },
-  tokenPurchase: {
-    title: 'Token Purchase',
-    subtitle: 'A future credits page for try-on generations, premium memory, or faster recommendation loops.',
-    cards: [
-      { title: 'Usage snapshot', body: 'Token balances, try-on consumption, and upgrade paths can live in this module.' },
-      { title: 'Plan design', body: 'This page is a placeholder so the navigation already has a stable home for billing later.' },
-    ],
-  },
-  settings: {
-    title: 'Settings',
-    subtitle: 'A lightweight preferences area for avatar, notifications, and future account controls.',
-    cards: [
-      { title: 'Profile appearance', body: 'Avatar, display name polish, and visual account settings can be managed here.' },
-      { title: 'Memory controls', body: 'Later this can expose preference-memory review, deletion, and retention settings.' },
-    ],
-  },
-}
-
 const USER_MENU_ITEMS = [
-  { key: 'reviewHistory', label: 'Review History' },
-  { key: 'purchaseHistory', label: 'Purchase History' },
-  { key: 'tokenPurchase', label: 'Token Purchase' },
-  { key: 'settings', label: 'Settings' },
+  { to: '/account/review-history', label: 'Review History' },
+  { to: '/account/purchase-history', label: 'Purchase History' },
+  { to: '/account/token-purchase', label: 'Token Purchase' },
+  { to: '/account/settings', label: 'Settings' },
 ]
 
 function UserAvatar({ profile, username, size = 'md' }) {
@@ -83,118 +40,13 @@ function UserAvatar({ profile, username, size = 'md' }) {
   )
 }
 
-function ProfileOverview({ activeView, avatarNotice, onSelectView, onAvatarUpload, onAvatarRemove }) {
-  const view = USER_VIEWS[activeView]
-  const isOverview = activeView === 'overview'
-
-  return (
-    <div className="px-5 pb-5">
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        {USER_MENU_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => onSelectView(item.key)}
-            className="rounded-full px-3 py-2 text-xs transition-colors duration-200"
-            style={{
-              backgroundColor: activeView === item.key ? '#E8B4BA' : '#F4EEE6',
-              color: activeView === item.key ? '#5C3640' : '#7B6A64',
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-
-      <div
-        className="rounded-2xl p-4 border"
-        style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.7) 0%, rgba(244,238,230,0.92) 100%)',
-          borderColor: '#E8D7CC',
-        }}
-      >
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.25em]" style={{ color: '#C97B84' }}>
-              {isOverview ? 'Account Studio' : 'Workspace Preview'}
-            </p>
-            <h3
-              className="mt-2 text-2xl font-serif leading-tight"
-              style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}
-            >
-              {view.title}
-            </h3>
-            <p className="mt-2 text-sm leading-6" style={{ color: '#6E615C' }}>
-              {view.subtitle}
-            </p>
-          </div>
-
-          <span
-            className="shrink-0 rounded-full px-3 py-1 text-[11px]"
-            style={{ backgroundColor: '#F7D7DB', color: '#8C4C59' }}
-          >
-            Coming Soon
-          </span>
-        </div>
-
-        {isOverview && (
-          <div className="mb-4 p-3 rounded-2xl" style={{ backgroundColor: '#FBF8F4' }}>
-            <div className="flex items-center gap-3">
-              <label
-                className="cursor-pointer rounded-full px-3 py-2 text-xs transition-colors"
-                style={{ backgroundColor: '#1A1A1A', color: '#FAF7F2' }}
-              >
-                Upload avatar
-                <input type="file" accept="image/*" className="hidden" onChange={onAvatarUpload} />
-              </label>
-              <button
-                type="button"
-                onClick={onAvatarRemove}
-                className="rounded-full px-3 py-2 text-xs border transition-colors"
-                style={{ borderColor: '#E8B4BA', color: '#8C7B75' }}
-              >
-                Remove image
-              </button>
-            </div>
-            <p className="mt-3 text-xs leading-5" style={{ color: '#8C7B75' }}>
-              Avatar images are stored locally in this browser for now, so smaller files work best.
-            </p>
-            {avatarNotice && (
-              <p className="mt-2 text-xs leading-5" style={{ color: '#B05B68' }}>
-                {avatarNotice}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {view.cards.map((card) => (
-            <div
-              key={card.title}
-              className="rounded-2xl p-4 border"
-              style={{ backgroundColor: '#FFFCF9', borderColor: '#EDE2D8' }}
-            >
-              <p className="text-sm font-medium" style={{ color: '#3D3535' }}>
-                {card.title}
-              </p>
-              <p className="mt-2 text-sm leading-6" style={{ color: '#7B6A64' }}>
-                {card.body}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function Navbar() {
   const { pathname } = useLocation()
-  const { looks, removeLook } = useSavedLooks()
+  const navigate = useNavigate()
+  const { looks, loading: savedLoading, removeLook, restoreLook } = useSavedLooks()
   const { user, profile, logout, updateProfile } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [activeView, setActiveView] = useState('overview')
   const [avatarNotice, setAvatarNotice] = useState('')
   const menuRef = useRef(null)
 
@@ -204,14 +56,12 @@ export default function Navbar() {
     const handlePointerDown = (event) => {
       if (!menuRef.current?.contains(event.target)) {
         setUserMenuOpen(false)
-        setActiveView('overview')
       }
     }
 
     const handleEscape = (event) => {
       if (event.key === 'Escape') {
         setUserMenuOpen(false)
-        setActiveView('overview')
       }
     }
 
@@ -226,10 +76,10 @@ export default function Navbar() {
     }
   }, [userMenuOpen])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setUserMenuOpen(false)
-    setActiveView('overview')
-    logout()
+    await logout()
+    navigate('/')
   }
 
   const handleAvatarUpload = (event) => {
@@ -256,11 +106,26 @@ export default function Navbar() {
     updateProfile({ avatarImage: null })
   }
 
-  const toggleUserMenu = () => {
-    setUserMenuOpen((open) => {
-      if (open) setActiveView('overview')
-      return !open
+  const handleMenuNavigate = (target) => {
+    setUserMenuOpen(false)
+    navigate(target)
+  }
+
+  const handleRestoreLook = async (savedItem) => {
+    const restored = await restoreLook(savedItem.id)
+    if (!restored?.garment_image_url) return
+
+    const params = new URLSearchParams({
+      garment: restored.garment_image_url,
     })
+
+    const category = restored.product?.metadata?.category || restored.product?.metadata?.articleType
+    if (category) params.set('type', category)
+    if (restored.product?.title) params.set('title', restored.product.title)
+    if (restored.product?.image_id) params.set('productId', restored.product.image_id)
+
+    setDrawerOpen(false)
+    navigate(`/try-on?${params.toString()}`)
   }
 
   return (
@@ -300,7 +165,7 @@ export default function Navbar() {
               <div className="relative" ref={menuRef}>
                 <button
                   type="button"
-                  onClick={toggleUserMenu}
+                  onClick={() => setUserMenuOpen((open) => !open)}
                   className="flex items-center gap-3 rounded-full pl-1 pr-3 py-1 transition-all duration-200"
                   style={{
                     backgroundColor: userMenuOpen ? '#F4EEE6' : 'transparent',
@@ -323,7 +188,7 @@ export default function Navbar() {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -10, scale: 0.98 }}
                       transition={{ duration: 0.18 }}
-                      className="absolute right-0 top-12 w-[24rem] rounded-[28px] overflow-hidden border z-50"
+                      className="absolute right-0 top-12 w-[22rem] rounded-[28px] overflow-hidden border z-50"
                       style={{
                         backgroundColor: '#FAF7F2',
                         borderColor: '#E8D7CC',
@@ -347,19 +212,53 @@ export default function Navbar() {
                               {user.username}
                             </p>
                             <p className="text-sm mt-1" style={{ color: '#8C7B75' }}>
-                              Your personal style workspace
+                              Account shortcuts
                             </p>
                           </div>
                         </div>
+
+                        <div className="mt-4 flex items-center gap-3">
+                          <label
+                            className="cursor-pointer rounded-full px-3 py-2 text-xs transition-colors"
+                            style={{ backgroundColor: '#1A1A1A', color: '#FAF7F2' }}
+                          >
+                            Upload avatar
+                            <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleAvatarRemove}
+                            className="rounded-full px-3 py-2 text-xs border transition-colors"
+                            style={{ borderColor: '#E8B4BA', color: '#8C7B75' }}
+                          >
+                            Remove image
+                          </button>
+                        </div>
+
+                        {avatarNotice && (
+                          <p className="mt-3 text-xs leading-5" style={{ color: '#B05B68' }}>
+                            {avatarNotice}
+                          </p>
+                        )}
                       </div>
 
-                      <ProfileOverview
-                        activeView={activeView}
-                        avatarNotice={avatarNotice}
-                        onSelectView={setActiveView}
-                        onAvatarUpload={handleAvatarUpload}
-                        onAvatarRemove={handleAvatarRemove}
-                      />
+                      <div className="px-5 py-4 space-y-2">
+                        {USER_MENU_ITEMS.map((item) => (
+                          <button
+                            key={item.to}
+                            type="button"
+                            onClick={() => handleMenuNavigate(item.to)}
+                            className="w-full rounded-2xl px-4 py-3 text-left text-sm transition-colors"
+                            style={{
+                              backgroundColor: pathname === item.to ? '#F1E4E6' : '#FFFCF8',
+                              color: pathname === item.to ? '#8C4C59' : '#3D3535',
+                              border: '1px solid #EDE2D8',
+                            }}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
 
                       <div className="px-5 pb-5">
                         <button
@@ -439,24 +338,46 @@ export default function Navbar() {
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
-                {looks.length === 0 ? (
+                {savedLoading ? (
                   <div className="flex flex-col items-center gap-3 mt-16 text-center">
                     <p className="text-sm" style={{ color: '#8C7B75' }}>
-                      No saved looks yet. Try something on and save the result.
+                      Loading saved items...
+                    </p>
+                  </div>
+                ) : looks.length === 0 ? (
+                  <div className="flex flex-col items-center gap-3 mt-16 text-center">
+                    <p className="text-sm" style={{ color: '#8C7B75' }}>
+                      No saved garments yet. Save a product from Style Explorer or Try On.
                     </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-3">
-                    {looks.map((url, i) => (
-                      <div key={i} className="relative group rounded-xl overflow-hidden aspect-[3/4]">
-                        <img src={url} alt={`Saved look ${i + 1}`} className="w-full h-full object-cover" />
-                        <div
-                          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
-                          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+                    {looks.map((item) => (
+                      <div key={item.id} className="rounded-xl overflow-hidden bg-white" style={{ boxShadow: '0 8px 18px rgba(139,90,80,0.08)' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreLook(item)}
+                          className="relative group block w-full aspect-[3/4] text-left"
                         >
+                          <img src={item.product_image_url} alt={item.product_name} className="w-full h-full object-cover" />
+                          <div
+                            className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center"
+                            style={{ backgroundColor: 'rgba(0,0,0,0.38)' }}
+                          >
+                            <span className="text-white text-xs px-3 py-1.5 rounded-full border border-white/60">
+                              Restore to Try On
+                            </span>
+                          </div>
+                        </button>
+                        <div className="p-3">
+                          <p className="text-xs line-clamp-2" style={{ color: '#3D3535' }}>
+                            {item.product_name}
+                          </p>
                           <button
-                            onClick={() => removeLook(url)}
-                            className="text-white text-xs px-3 py-1.5 rounded-full border border-white/60 hover:bg-white/20 transition-colors"
+                            type="button"
+                            onClick={() => removeLook(item.id)}
+                            className="mt-3 text-xs px-3 py-1.5 rounded-full border transition-colors"
+                            style={{ borderColor: '#E8B4BA', color: '#8C7B75' }}
                           >
                             Remove
                           </button>

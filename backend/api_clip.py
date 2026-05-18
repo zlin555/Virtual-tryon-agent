@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import math
 import threading
 import urllib.request
 from typing import List, Optional
@@ -15,7 +16,8 @@ except ImportError:
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
-from pydantic import BaseModel
+from langchain_openai import OpenAIEmbeddings
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.auth import (
@@ -29,7 +31,8 @@ from backend.auth import (
     user_to_response,
 )
 from backend.database import get_db, init_db
-from backend.models import User
+from backend.memory import SessionMemoryStore
+from backend.models import User, UserConversationHistory, UserLongTermMemory, UserSavedItem
 
 from backend.new_main_framework import (
     AgentRequest,
@@ -57,6 +60,77 @@ _tryon_svc = _resolve_tryon_service()
 _agent_app = None
 _agent_ready = threading.Event()
 _agent_load_error: Optional[Exception] = None
+_session_memory = SessionMemoryStore()
+_memory_embeddings = None
+
+
+def _get_memory_embeddings():
+    global _memory_embeddings
+    if _memory_embeddings is None:
+        model = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
+        _memory_embeddings = OpenAIEmbeddings(model=model)
+    return _memory_embeddings
+
+
+def _embed_text(text: str) -> Optional[List[float]]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    try:
+        return _get_memory_embeddings().embed_query(cleaned)
+    except Exception as exc:
+        print(f"[memory] Embedding generation failed: {exc}")
+        return None
+
+
+def _cosine_similarity(vec_a: Optional[List[float]], vec_b: Optional[List[float]]) -> float:
+    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+        return -1.0
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = math.sqrt(sum(a * a for a in vec_a))
+    norm_b = math.sqrt(sum(b * b for b in vec_b))
+    if norm_a == 0 or norm_b == 0:
+        return -1.0
+    return dot / (norm_a * norm_b)
+
+
+def _memory_to_context_block(memories: List[UserLongTermMemory]) -> str:
+    if not memories:
+        return ""
+    lines = []
+    for memory in memories:
+        prefix = f"[{memory.memory_type}]"
+        suffix = f" (confidence={memory.confidence:.2f})" if memory.confidence is not None else ""
+        lines.append(f"{prefix} {memory.memory_text}{suffix}")
+    return "Relevant long-term user preferences:\n" + "\n".join(lines)
+
+
+def _retrieve_relevant_memories(
+    db: Session,
+    *,
+    user_id: int,
+    query_text: str,
+    limit: int = 3,
+) -> List[UserLongTermMemory]:
+    query_embedding = _embed_text(query_text)
+    if not query_embedding:
+        return []
+
+    memories = (
+        db.query(UserLongTermMemory)
+        .filter(UserLongTermMemory.user_id == user_id)
+        .order_by(UserLongTermMemory.updated_at.desc())
+        .all()
+    )
+
+    ranked = []
+    for memory in memories:
+        score = _cosine_similarity(query_embedding, memory.embedding_json)
+        if score >= 0:
+            ranked.append((score, memory))
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [memory for _, memory in ranked[:limit]]
 
 
 def _load_agent_background():
@@ -105,16 +179,125 @@ class ChatRequest(BaseModel):
     message: str
     history: List[ChatMessage] = []
     style_image_url: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
     response: str
     search_results: List[dict] = []
     user_id: Optional[int] = None
+    session_id: Optional[str] = None
+    memory_backend: Optional[str] = None
+    cached_turn_count: Optional[int] = None
+    retrieved_memories: List[dict] = []
 
 
 class UploadResponse(BaseModel):
     image_url: str
+
+
+class MemorySessionResponse(BaseModel):
+    session_id: str
+    summary: str
+    turns: List[dict]
+    turn_count: int
+    backend: str
+
+
+class MemorySearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    limit: int = Field(default=3, ge=1, le=10)
+
+
+class MemoryItemResponse(BaseModel):
+    id: int
+    memory_type: str
+    memory_text: str
+    confidence: float
+    source_session_id: Optional[str] = None
+    metadata_json: Optional[dict] = None
+
+
+class SavedItemCreateRequest(BaseModel):
+    product_id: str
+    product_name: str
+    product_image_url: str
+    product_category: Optional[str] = None
+    product_gender: Optional[str] = None
+    search_keyword: Optional[str] = None
+    product_payload_json: Optional[dict] = None
+
+
+class SavedItemResponse(BaseModel):
+    id: int
+    product_id: str
+    product_name: str
+    product_image_url: str
+    product_category: Optional[str] = None
+    product_gender: Optional[str] = None
+    search_keyword: Optional[str] = None
+    product_payload_json: Optional[dict] = None
+
+
+class SavedItemRestoreResponse(BaseModel):
+    saved_item_id: int
+    retrieval_mode: str
+    garment_image_url: str
+    product: dict
+
+
+def _persist_conversation_row(
+    db: Session,
+    *,
+    user_id: int,
+    session_id: str,
+    turn_index: int,
+    role: str,
+    message_text: str,
+    products: Optional[List[dict]] = None,
+) -> None:
+    db.add(UserConversationHistory(
+        user_id=user_id,
+        session_id=session_id,
+        turn_index=turn_index,
+        role=role,
+        message_text=message_text,
+        products_json=products,
+    ))
+
+
+def _flush_session_to_long_term_memory(
+    db: Session,
+    *,
+    current_user: User,
+    session_id: Optional[str],
+) -> MemorySessionResponse:
+    snapshot = _session_memory.clear_session(current_user.id, session_id)
+    if snapshot.summary.strip():
+        memory_text = snapshot.summary.strip()
+        db.add(UserLongTermMemory(
+            user_id=current_user.id,
+            memory_type="style_preference",
+            memory_text=memory_text,
+            source_session_id=snapshot.session_id,
+            source_window_start=max(snapshot.turn_count - len(snapshot.turns) + 1, 1) if snapshot.turn_count else None,
+            source_window_end=snapshot.turn_count or None,
+            confidence=0.6,
+            embedding_json=_embed_text(memory_text),
+            metadata_json={
+                "memory_backend": snapshot.backend,
+                "cached_turns_flushed": len(snapshot.turns),
+            },
+        ))
+        db.commit()
+
+    return MemorySessionResponse(
+        session_id=snapshot.session_id,
+        summary=snapshot.summary,
+        turns=snapshot.turns,
+        turn_count=snapshot.turn_count,
+        backend=snapshot.backend,
+    )
 
 
 @app.post("/api/auth/register", response_model=TokenResponse)
@@ -150,16 +333,35 @@ def run_tryon(req: TryOnRequest) -> TryOnResult:
 def agent_chat(
     req: ChatRequest,
     current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
 ) -> ChatResponse:
-    # Build a context-aware message that includes recent history
+    # Build a context-aware message that includes frontend history and cached session memory.
     history_text = ""
     if req.history:
         for msg in req.history[-6:]:
             prefix = "User" if msg.role == "user" else "Assistant"
             history_text += f"{prefix}: {msg.content}\n"
 
+    memory_text = ""
+    relevant_memories: List[UserLongTermMemory] = []
+    if current_user:
+        memory_text = _session_memory.build_context_block(current_user.id, req.session_id)
+        relevant_memories = _retrieve_relevant_memories(
+            db,
+            user_id=current_user.id,
+            query_text=req.message,
+            limit=3,
+        )
+
+    context_prefix = ""
+    long_term_memory_text = _memory_to_context_block(relevant_memories)
+    if long_term_memory_text:
+        context_prefix += f"{long_term_memory_text}\n\n"
+    if memory_text:
+        context_prefix += f"{memory_text}\n\n"
+
     full_message = (
-        f"{history_text}User: {req.message}" if history_text else req.message
+        f"{context_prefix}{history_text}User: {req.message}" if (context_prefix or history_text) else req.message
     )
 
     try:
@@ -206,10 +408,110 @@ def agent_chat(
                 except (json.JSONDecodeError, ValueError):
                     pass
 
+    session_id = req.session_id or "primary"
+    cached_turn_count = None
+    memory_backend = None
+
+    if current_user:
+        snapshot = _session_memory.remember_exchange(
+            user_id=current_user.id,
+            session_id=session_id,
+            user_message=req.message,
+            assistant_message=response_text,
+            search_results=search_results,
+        )
+        memory_backend = snapshot.backend
+        cached_turn_count = snapshot.turn_count
+
+        _persist_conversation_row(
+            db,
+            user_id=current_user.id,
+            session_id=snapshot.session_id,
+            turn_index=max(snapshot.turn_count * 2 - 1, 1),
+            role="user",
+            message_text=req.message,
+        )
+        _persist_conversation_row(
+            db,
+            user_id=current_user.id,
+            session_id=snapshot.session_id,
+            turn_index=max(snapshot.turn_count * 2, 2),
+            role="assistant",
+            message_text=response_text,
+            products=search_results,
+        )
+        db.commit()
+
     return ChatResponse(
         response=response_text,
         search_results=search_results,
         user_id=current_user.id if current_user else None,
+        session_id=session_id if current_user else None,
+        memory_backend=memory_backend,
+        cached_turn_count=cached_turn_count,
+        retrieved_memories=[
+            {
+                "id": memory.id,
+                "memory_type": memory.memory_type,
+                "memory_text": memory.memory_text,
+                "confidence": memory.confidence,
+            }
+            for memory in relevant_memories
+        ],
+    )
+
+
+def _saved_item_to_response(item: UserSavedItem) -> SavedItemResponse:
+    return SavedItemResponse(
+        id=item.id,
+        product_id=item.product_id,
+        product_name=item.product_name,
+        product_image_url=item.product_image_url,
+        product_category=item.product_category,
+        product_gender=item.product_gender,
+        search_keyword=item.search_keyword,
+        product_payload_json=item.product_payload_json,
+    )
+
+
+def _restore_saved_item_product(saved_item: UserSavedItem) -> SavedItemRestoreResponse:
+    agent = _get_agent()
+    retrieval_mode = "saved_url"
+    product = agent.get_product_by_id(saved_item.product_id)
+
+    if product is None:
+        product = agent.get_product_by_name(saved_item.product_name)
+        retrieval_mode = "csv_name_match"
+
+    if product is None:
+        query_text = saved_item.search_keyword or saved_item.product_name
+        search_results = agent.search_products(
+            query=query_text,
+            category=saved_item.product_category,
+            limit=1,
+        )
+        if search_results:
+            product = search_results[0]
+            retrieval_mode = "clip_retrieval"
+
+    if product is None:
+        return SavedItemRestoreResponse(
+            saved_item_id=saved_item.id,
+            retrieval_mode="saved_url_fallback",
+            garment_image_url=saved_item.product_image_url,
+            product={
+                "image_id": saved_item.product_id,
+                "title": saved_item.product_name,
+                "image_url": saved_item.product_image_url,
+                "metadata": saved_item.product_payload_json or {},
+            },
+        )
+
+    return SavedItemRestoreResponse(
+        saved_item_id=saved_item.id,
+        retrieval_mode=retrieval_mode,
+        garment_image_url=product.image_url,
+        product=product.model_dump(),
     )
 
 
@@ -334,3 +636,151 @@ def ready():
         "search": "original_product_retrieval_clip_faiss",
         "error": str(_agent_load_error) if _agent_load_error else None,
     }
+
+
+@app.get("/api/memory/session", response_model=MemorySessionResponse)
+def get_memory_session(
+    session_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+) -> MemorySessionResponse:
+    snapshot = _session_memory.get_snapshot(current_user.id, session_id)
+    return MemorySessionResponse(
+        session_id=snapshot.session_id,
+        summary=snapshot.summary,
+        turns=snapshot.turns,
+        turn_count=snapshot.turn_count,
+        backend=snapshot.backend,
+    )
+
+
+@app.post("/api/memory/session/flush", response_model=MemorySessionResponse)
+def flush_memory_session(
+    session_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemorySessionResponse:
+    return _flush_session_to_long_term_memory(
+        db,
+        current_user=current_user,
+        session_id=session_id,
+    )
+
+
+@app.post("/api/memory/search", response_model=List[MemoryItemResponse])
+def search_memory(
+    req: MemorySearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[MemoryItemResponse]:
+    memories = _retrieve_relevant_memories(
+        db,
+        user_id=current_user.id,
+        query_text=req.query,
+        limit=req.limit,
+    )
+    return [
+        MemoryItemResponse(
+            id=memory.id,
+            memory_type=memory.memory_type,
+            memory_text=memory.memory_text,
+            confidence=memory.confidence,
+            source_session_id=memory.source_session_id,
+            metadata_json=memory.metadata_json,
+        )
+        for memory in memories
+    ]
+
+
+@app.get("/api/saved", response_model=List[SavedItemResponse])
+def list_saved_items(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[SavedItemResponse]:
+    items = (
+        db.query(UserSavedItem)
+        .filter(UserSavedItem.user_id == current_user.id)
+        .order_by(UserSavedItem.created_at.desc())
+        .all()
+    )
+    return [_saved_item_to_response(item) for item in items]
+
+
+@app.post("/api/saved", response_model=SavedItemResponse)
+def create_saved_item(
+    payload: SavedItemCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedItemResponse:
+    existing = (
+        db.query(UserSavedItem)
+        .filter(
+            UserSavedItem.user_id == current_user.id,
+            UserSavedItem.product_id == payload.product_id,
+        )
+        .first()
+    )
+    if existing:
+        existing.product_name = payload.product_name
+        existing.product_image_url = payload.product_image_url
+        existing.product_category = payload.product_category
+        existing.product_gender = payload.product_gender
+        existing.search_keyword = payload.search_keyword
+        existing.product_payload_json = payload.product_payload_json
+        db.commit()
+        db.refresh(existing)
+        return _saved_item_to_response(existing)
+
+    item = UserSavedItem(
+        user_id=current_user.id,
+        product_id=payload.product_id,
+        product_name=payload.product_name,
+        product_image_url=payload.product_image_url,
+        product_category=payload.product_category,
+        product_gender=payload.product_gender,
+        search_keyword=payload.search_keyword,
+        product_payload_json=payload.product_payload_json,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return _saved_item_to_response(item)
+
+
+@app.delete("/api/saved/{saved_item_id}")
+def delete_saved_item(
+    saved_item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    item = (
+        db.query(UserSavedItem)
+        .filter(
+            UserSavedItem.id == saved_item_id,
+            UserSavedItem.user_id == current_user.id,
+        )
+        .first()
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Saved item not found.")
+    db.delete(item)
+    db.commit()
+    return {"deleted": True, "saved_item_id": saved_item_id}
+
+
+@app.post("/api/saved/{saved_item_id}/restore", response_model=SavedItemRestoreResponse)
+def restore_saved_item(
+    saved_item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SavedItemRestoreResponse:
+    item = (
+        db.query(UserSavedItem)
+        .filter(
+            UserSavedItem.id == saved_item_id,
+            UserSavedItem.user_id == current_user.id,
+        )
+        .first()
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Saved item not found.")
+    return _restore_saved_item_product(item)

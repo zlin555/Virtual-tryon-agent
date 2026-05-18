@@ -117,7 +117,14 @@ export function AuthProvider({ children }) {
     return applyAuthResponse(data)
   }, [applyAuthResponse])
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    try {
+      if (localStorage.getItem(AUTH_TOKEN_KEY)) {
+        await api.post('/memory/session/flush')
+      }
+    } catch {
+      // Ignore flush errors during logout so auth state still clears locally.
+    }
     persistToken(null)
     setUser(null)
     setProfile(null)

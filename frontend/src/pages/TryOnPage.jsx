@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLocation } from 'react-router-dom'
 import ImageInput from '../components/tryon/ImageInput'
@@ -15,11 +15,21 @@ export default function TryOnPage() {
   const [personUrl, setPersonUrl] = useState('')
   const [garmentUrl, setGarmentUrl] = useState(params.get('garment') || '')
   const [garmentType, setGarmentType] = useState(params.get('type') || '')
+  const [garmentTitle, setGarmentTitle] = useState(params.get('title') || '')
+  const [garmentProductId, setGarmentProductId] = useState(params.get('productId') || '')
   const [styleNote, setStyleNote] = useState('')
 
   const { status, resultUrl, message, runTryOn } = useTryOn()
   const { saveLook } = useSavedLooks()
   const { user } = useAuth()
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams(location.search)
+    setGarmentUrl(nextParams.get('garment') || '')
+    setGarmentType(nextParams.get('type') || '')
+    setGarmentTitle(nextParams.get('title') || '')
+    setGarmentProductId(nextParams.get('productId') || '')
+  }, [location.search])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -55,6 +65,15 @@ export default function TryOnPage() {
             >
               <ImageInput label="Your Photo" value={personUrl} onChange={setPersonUrl} />
               <ImageInput label="Garment Image" value={garmentUrl} onChange={setGarmentUrl} />
+
+              {garmentTitle && (
+                <div
+                  className="rounded-xl px-4 py-3 text-sm"
+                  style={{ backgroundColor: '#FAF7F2', border: '1px solid #E8B4BA', color: '#3D3535' }}
+                >
+                  Selected item: {garmentTitle}
+                </div>
+              )}
 
               {/* Garment type pill-toggle */}
               <div>
@@ -171,11 +190,18 @@ export default function TryOnPage() {
                 >
                   <button
                     type="button"
-                    onClick={() => saveLook(resultUrl)}
+                    onClick={() => saveLook({
+                      image_id: garmentProductId || garmentUrl,
+                      title: garmentTitle || 'Saved garment',
+                      image_url: garmentUrl,
+                      metadata: {
+                        category: garmentType || null,
+                      },
+                    })}
                     className="flex-1 py-3 rounded-full font-medium text-sm border transition-all duration-300 hover:scale-105"
                     style={{ borderColor: '#C97B84', color: '#C97B84', display: user ? 'block' : 'none' }}
                   >
-                    ♡ Save to Looks
+                    Save Garment
                   </button>
                   <a
                     href={resultUrl} target="_blank" rel="noopener noreferrer"

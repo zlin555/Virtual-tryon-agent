@@ -437,6 +437,57 @@ class ProductRetrievalService(ImageSearchService):
 
         return results
 
+    def get_product_by_id(self, product_id: str) -> Optional[SearchImageResult]:
+        if not product_id:
+            return None
+
+        matches = self.df[self.df["id"].astype(str) == str(product_id)]
+        if matches.empty:
+            return None
+
+        row = matches.iloc[0]
+        return SearchImageResult(
+            image_id=str(row["id"]),
+            title=str(row["productDisplayName"]),
+            image_url=str(row["link"]),
+            source="kaggle_fashion_dataset_exact_id",
+            metadata={
+                "category": row.get("subCategory", ""),
+                "articleType": row.get("articleType", ""),
+                "color": row.get("baseColour", ""),
+                "usage": row.get("usage", ""),
+                "gender": row.get("gender", ""),
+            },
+        )
+
+    def get_product_by_name(self, product_name: str) -> Optional[SearchImageResult]:
+        if not product_name:
+            return None
+
+        name_series = self.df["productDisplayName"].astype(str)
+        exact_matches = self.df[name_series.str.lower() == product_name.strip().lower()]
+        if exact_matches.empty:
+            contains_matches = self.df[name_series.str.contains(re.escape(product_name.strip()), case=False, na=False)]
+            if contains_matches.empty:
+                return None
+            row = contains_matches.iloc[0]
+        else:
+            row = exact_matches.iloc[0]
+
+        return SearchImageResult(
+            image_id=str(row["id"]),
+            title=str(row["productDisplayName"]),
+            image_url=str(row["link"]),
+            source="kaggle_fashion_dataset_exact_name",
+            metadata={
+                "category": row.get("subCategory", ""),
+                "articleType": row.get("articleType", ""),
+                "color": row.get("baseColour", ""),
+                "usage": row.get("usage", ""),
+                "gender": row.get("gender", ""),
+            },
+        )
+
 class VirtualTryOnService:
     """Abstract-ish interface for virtual try-on backend."""
 
@@ -849,8 +900,9 @@ class VirtualTryOnOrchestrator:
     This gives you one place to plug into a FastAPI route, web app, or CLI.
     """
 
-    def __init__(self, agent: VirtualTryOnAgent):
+    def __init__(self, agent: VirtualTryOnAgent, deps: Optional[AgentDependencies] = None):
         self.agent = agent
+        self.deps = deps
 
     def run(self, user_message: str, style_image_url: Optional[str] = None) -> str:
         raw = self.agent.invoke(
@@ -896,6 +948,25 @@ class VirtualTryOnOrchestrator:
 
         return str(last)
 
+    @property
+    def image_search_service(self) -> ImageSearchService:
+        if self.deps is None:
+            raise RuntimeError("Agent dependencies are not attached to the orchestrator.")
+        return self.deps.image_search_service
+
+    def search_products(self, query: str, category: Optional[str] = None, limit: int = 6) -> List[SearchImageResult]:
+        return self.image_search_service.search_images(query=query, category=category, limit=limit)
+
+    def get_product_by_id(self, product_id: str) -> Optional[SearchImageResult]:
+        service = self.image_search_service
+        getter = getattr(service, "get_product_by_id", None)
+        return getter(product_id) if getter else None
+
+    def get_product_by_name(self, product_name: str) -> Optional[SearchImageResult]:
+        service = self.image_search_service
+        getter = getattr(service, "get_product_by_name", None)
+        return getter(product_name) if getter else None
+
 
 # =========================
 # App factory
@@ -934,7 +1005,7 @@ def build_app_agent() -> VirtualTryOnOrchestrator:
     )
 
     agent = VirtualTryOnAgent(model_name="gpt-4.1-mini", temperature=0.2).build(deps)
-    return VirtualTryOnOrchestrator(agent)
+    return VirtualTryOnOrchestrator(agent, deps=deps)
 
 
 # =========================
