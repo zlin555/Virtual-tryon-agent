@@ -374,6 +374,25 @@ class StyleSummaryResponse(BaseModel):
     source_memories: List[MemoryItemResponse] = []
 
 
+class MemoryDebugItemResponse(BaseModel):
+    id: int
+    memory_type: str
+    source_session_id: Optional[str] = None
+    confidence: float
+    created_at: str
+    updated_at: str
+    embedding_length: int
+    memory_text: str
+
+
+class MemoryDebugResponse(BaseModel):
+    user_id: int
+    username: str
+    memories_count: int
+    latest_memory: Optional[MemoryDebugItemResponse] = None
+    memories: List[MemoryDebugItemResponse] = []
+
+
 class SavedItemCreateRequest(BaseModel):
     product_id: str
     product_name: str
@@ -922,6 +941,41 @@ def get_style_summary(
             )
             for memory in memories[:12]
         ],
+    )
+
+
+@app.get("/api/memory/debug", response_model=MemoryDebugResponse)
+def get_memory_debug(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MemoryDebugResponse:
+    memories = (
+        db.query(UserLongTermMemory)
+        .filter(UserLongTermMemory.user_id == current_user.id)
+        .order_by(UserLongTermMemory.updated_at.desc(), UserLongTermMemory.created_at.desc())
+        .all()
+    )
+
+    debug_items = [
+        MemoryDebugItemResponse(
+            id=memory.id,
+            memory_type=memory.memory_type,
+            source_session_id=memory.source_session_id,
+            confidence=memory.confidence,
+            created_at=memory.created_at.isoformat() if memory.created_at else "",
+            updated_at=memory.updated_at.isoformat() if memory.updated_at else "",
+            embedding_length=len(memory.embedding_json or []),
+            memory_text=memory.memory_text,
+        )
+        for memory in memories
+    ]
+
+    return MemoryDebugResponse(
+        user_id=current_user.id,
+        username=current_user.username,
+        memories_count=len(debug_items),
+        latest_memory=debug_items[0] if debug_items else None,
+        memories=debug_items[:10],
     )
 
 
