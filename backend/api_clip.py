@@ -133,6 +133,155 @@ def _retrieve_relevant_memories(
     return [memory for _, memory in ranked[:limit]]
 
 
+def _build_memory_text(
+    *,
+    existing_summary: str = "",
+    review_entries: Optional[List[dict]] = None,
+    turns: Optional[List[dict]] = None,
+) -> str:
+    if existing_summary.strip():
+        return existing_summary.strip()
+
+    review_entries = review_entries or []
+    turns = turns or []
+
+    latest_queries = [entry.get("user_message", "").strip() for entry in review_entries[-3:] if entry.get("user_message")]
+    latest_products = []
+    seen_titles = set()
+    for entry in review_entries[-3:]:
+      for product in entry.get("products", [])[:4]:
+        title = (product.get("title") or "").strip()
+        if not title or title in seen_titles:
+          continue
+        seen_titles.add(title)
+        latest_products.append(title)
+
+    if not latest_queries and turns:
+        latest_queries = [
+            turn.get("content", "").strip()
+            for turn in turns
+            if turn.get("role") == "user" and turn.get("content")
+        ][-3:]
+
+    prompt_sections = []
+    if latest_queries:
+        prompt_sections.append("Recent user requests:\n- " + "\n- ".join(latest_queries))
+    if latest_products:
+        prompt_sections.append("Retrieved products:\n- " + "\n- ".join(latest_products))
+
+    if prompt_sections:
+        try:
+            model = ChatOpenAI(
+                model=os.getenv("MEMORY_SUMMARY_MODEL", "gpt-4.1-mini"),
+                temperature=0.2,
+            )
+            response = model.invoke([
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarize this user's current fashion preference into 2-4 concise sentences. "
+                        "Focus on category, style direction, color/formality, and shopping intent. "
+                        "Write it as a stable preference memory that can be stored long-term.\n\n"
+                        + "\n\n".join(prompt_sections)
+                    ),
+                }
+            ])
+            content = getattr(response, "content", "")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        except Exception as exc:
+            print(f"[memory] Bootstrap summary generation failed: {exc}")
+
+    fallback_parts = []
+    if latest_queries:
+        fallback_parts.append("Recent requests: " + "; ".join(latest_queries))
+    if latest_products:
+        fallback_parts.append("Retrieved products: " + ", ".join(latest_products))
+    return "\n".join(fallback_parts).strip()
+
+
+def _upsert_long_term_memory(
+    db: Session,
+    *,
+    user_id: int,
+    source_session_id: str,
+    memory_text: str,
+    confidence: float,
+    source_window_start: Optional[int],
+    source_window_end: Optional[int],
+    metadata_json: Optional[dict] = None,
+) -> UserLongTermMemory:
+    existing = (
+        db.query(UserLongTermMemory)
+        .filter(
+            UserLongTermMemory.user_id == user_id,
+            UserLongTermMemory.source_session_id == source_session_id,
+        )
+        .order_by(UserLongTermMemory.updated_at.desc())
+        .first()
+    )
+
+    if existing is None:
+        existing = UserLongTermMemory(
+            user_id=user_id,
+            memory_type="style_preference",
+            source_session_id=source_session_id,
+        )
+        db.add(existing)
+
+    existing.memory_text = memory_text
+    existing.confidence = confidence
+    existing.source_window_start = source_window_start
+    existing.source_window_end = source_window_end
+    existing.embedding_json = _embed_text(memory_text)
+    existing.metadata_json = metadata_json or {}
+    return existing
+
+
+def _ensure_bootstrap_long_term_memory(
+    db: Session,
+    *,
+    current_user: User,
+    session_id: str,
+    user_message: str,
+    assistant_message: str,
+    search_results: List[dict],
+) -> None:
+    existing_count = (
+        db.query(UserLongTermMemory)
+        .filter(UserLongTermMemory.user_id == current_user.id)
+        .count()
+    )
+    if existing_count > 0:
+        return
+
+    memory_text = _build_memory_text(
+        review_entries=[{
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "products": search_results,
+        }],
+    )
+    if not memory_text:
+        return
+
+    _upsert_long_term_memory(
+        db,
+        user_id=current_user.id,
+        source_session_id=session_id,
+        memory_text=memory_text,
+        confidence=0.35,
+        source_window_start=1,
+        source_window_end=1,
+        metadata_json={
+            "memory_backend": _session_memory.backend,
+            "bootstrap_initial": True,
+            "bootstrap_after_first_chat": True,
+        },
+    )
+    db.commit()
+
+
 def _load_agent_background():
     global _agent_app, _agent_load_error
     try:
@@ -280,22 +429,27 @@ def _flush_session_to_long_term_memory(
     session_id: Optional[str],
 ) -> MemorySessionResponse:
     snapshot = _session_memory.clear_session(current_user.id, session_id)
-    if snapshot.summary.strip():
-        memory_text = snapshot.summary.strip()
-        db.add(UserLongTermMemory(
+    memory_text = _build_memory_text(
+        existing_summary=snapshot.summary,
+        review_entries=snapshot.review_entries,
+        turns=snapshot.turns,
+    )
+    if memory_text:
+        _upsert_long_term_memory(
+            db,
             user_id=current_user.id,
-            memory_type="style_preference",
-            memory_text=memory_text,
             source_session_id=snapshot.session_id,
+            memory_text=memory_text,
+            confidence=0.6,
             source_window_start=max(snapshot.turn_count - len(snapshot.turns) + 1, 1) if snapshot.turn_count else None,
             source_window_end=snapshot.turn_count or None,
-            confidence=0.6,
-            embedding_json=_embed_text(memory_text),
             metadata_json={
                 "memory_backend": snapshot.backend,
                 "cached_turns_flushed": len(snapshot.turns),
+                "review_entries_flushed": len(snapshot.review_entries),
+                "bootstrap_initial": False,
             },
-        ))
+        )
         db.commit()
 
     return MemorySessionResponse(
@@ -447,6 +601,14 @@ def agent_chat(
             role="assistant",
             message_text=response_text,
             products=search_results,
+        )
+        _ensure_bootstrap_long_term_memory(
+            db,
+            current_user=current_user,
+            session_id=snapshot.session_id,
+            user_message=req.message,
+            assistant_message=response_text,
+            search_results=search_results,
         )
         db.commit()
 
