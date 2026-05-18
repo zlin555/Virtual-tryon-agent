@@ -16,7 +16,7 @@ except ImportError:
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Depends
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -200,6 +200,7 @@ class MemorySessionResponse(BaseModel):
     session_id: str
     summary: str
     turns: List[dict]
+    review_entries: List[dict] = []
     turn_count: int
     backend: str
 
@@ -216,6 +217,12 @@ class MemoryItemResponse(BaseModel):
     confidence: float
     source_session_id: Optional[str] = None
     metadata_json: Optional[dict] = None
+
+
+class StyleSummaryResponse(BaseModel):
+    summary: str
+    memories_count: int
+    source_memories: List[MemoryItemResponse] = []
 
 
 class SavedItemCreateRequest(BaseModel):
@@ -295,6 +302,7 @@ def _flush_session_to_long_term_memory(
         session_id=snapshot.session_id,
         summary=snapshot.summary,
         turns=snapshot.turns,
+        review_entries=snapshot.review_entries,
         turn_count=snapshot.turn_count,
         backend=snapshot.backend,
     )
@@ -474,6 +482,40 @@ def _saved_item_to_response(item: UserSavedItem) -> SavedItemResponse:
     )
 
 
+def _build_long_term_style_summary(memories: List[UserLongTermMemory]) -> str:
+    if not memories:
+        return ""
+
+    prompt_lines = [
+        f"- [{memory.memory_type}] {memory.memory_text} (confidence={memory.confidence:.2f})"
+        for memory in memories[:12]
+    ]
+
+    try:
+        model = ChatOpenAI(
+            model=os.getenv("MEMORY_SUMMARY_MODEL", "gpt-4.1-mini"),
+            temperature=0.2,
+        )
+        response = model.invoke([
+            {
+                "role": "user",
+                "content": (
+                    "Summarize this user's long-term fashion preferences into a concise style profile. "
+                    "Focus on silhouette, palette, occasions, formality, and recurring aesthetic cues. "
+                    "Return one short paragraph followed by three short lines of concrete style traits.\n\n"
+                    + "\n".join(prompt_lines)
+                ),
+            }
+        ])
+        content = getattr(response, "content", "")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    except Exception as exc:
+        print(f"[memory] Style summary generation failed: {exc}")
+
+    return "\n".join(prompt_lines)
+
+
 def _restore_saved_item_product(saved_item: UserSavedItem) -> SavedItemRestoreResponse:
     agent = _get_agent()
     retrieval_mode = "saved_url"
@@ -648,6 +690,7 @@ def get_memory_session(
         session_id=snapshot.session_id,
         summary=snapshot.summary,
         turns=snapshot.turns,
+        review_entries=snapshot.review_entries,
         turn_count=snapshot.turn_count,
         backend=snapshot.backend,
     )
@@ -689,6 +732,35 @@ def search_memory(
         )
         for memory in memories
     ]
+
+
+@app.get("/api/memory/style-summary", response_model=StyleSummaryResponse)
+def get_style_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StyleSummaryResponse:
+    memories = (
+        db.query(UserLongTermMemory)
+        .filter(UserLongTermMemory.user_id == current_user.id)
+        .order_by(UserLongTermMemory.updated_at.desc())
+        .all()
+    )
+
+    return StyleSummaryResponse(
+        summary=_build_long_term_style_summary(memories),
+        memories_count=len(memories),
+        source_memories=[
+            MemoryItemResponse(
+                id=memory.id,
+                memory_type=memory.memory_type,
+                memory_text=memory.memory_text,
+                confidence=memory.confidence,
+                source_session_id=memory.source_session_id,
+                metadata_json=memory.metadata_json,
+            )
+            for memory in memories[:12]
+        ],
+    )
 
 
 @app.get("/api/saved", response_model=List[SavedItemResponse])

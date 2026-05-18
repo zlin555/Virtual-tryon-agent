@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import api from '../api/client'
+import { getStyleSessionId } from '../lib/styleSession'
 
 const STYLE_TERMS = [
   'Minimalist', 'Streetwear', 'Bohemian', 'Preppy', 'Dark Academia',
@@ -29,15 +30,6 @@ function extractStyleKeywords(response) {
     response.toLowerCase().includes(term.toLowerCase())
   )
   return [...new Set([...termMatches, ...quoted])].slice(0, 10)
-}
-
-function readSessionId() {
-  const key = 'tryon_style_session_id'
-  const existing = sessionStorage.getItem(key)
-  if (existing) return existing
-  const next = `style-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-  sessionStorage.setItem(key, next)
-  return next
 }
 
 async function waitForAgent(onStatus) {
@@ -88,10 +80,10 @@ export default function useAgentChat() {
     ]))
 
     try {
-      const { data } = await api.post('/agent/chat', {
+        const { data } = await api.post('/agent/chat', {
         message,
         history: plainHistory.slice(-6),
-        session_id: readSessionId(),
+        session_id: getStyleSessionId(),
         ...(styleImageUrl ? { style_image_url: styleImageUrl } : {}),
       })
 

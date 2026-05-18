@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
+import { getStyleSessionId } from '../../lib/styleSession'
 
 function HistoryProductCard({ product, onTryOn }) {
   const imageUrl = product.image_url || product.imageUrl
@@ -27,7 +28,12 @@ function HistoryProductCard({ product, onTryOn }) {
         )}
         <button
           type="button"
-          onClick={() => onTryOn(imageUrl, product.metadata?.category || product.metadata?.articleType)}
+          onClick={() => onTryOn(
+            imageUrl,
+            product.metadata?.category || product.metadata?.articleType,
+            product.title,
+            product.image_id,
+          )}
           className="mt-4 w-full rounded-full py-2 text-xs text-white"
           style={{ backgroundColor: '#C97B84' }}
         >
@@ -44,46 +50,41 @@ export default function ReviewHistoryPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    let alive = true
-
-    async function loadHistory() {
-      setLoading(true)
-      setError('')
-      try {
-        const { data } = await api.get('/memory/session')
-        const turns = Array.isArray(data.turns) ? data.turns : []
-        const grouped = []
-
-        for (let index = 0; index < turns.length; index += 1) {
-          const turn = turns[index]
-          if (turn.role !== 'user') continue
-          const assistantTurn = turns[index + 1]?.role === 'assistant' ? turns[index + 1] : null
-          grouped.push({
-            id: `${index}-${turn.created_at || 'turn'}`,
-            userMessage: turn.content,
-            assistantMessage: assistantTurn?.content || '',
-            products: assistantTurn?.products || [],
-          })
-        }
-
-        if (alive) setEntries(grouped.reverse())
-      } catch (err) {
-        if (alive) {
-          setError(err.response?.data?.detail || err.message || 'Unable to load review history.')
-        }
-      } finally {
-        if (alive) setLoading(false)
-      }
+  const loadHistory = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    setError('')
+    try {
+      const { data } = await api.get('/memory/session', {
+        params: { session_id: getStyleSessionId() },
+      })
+      const reviewEntries = Array.isArray(data.review_entries) ? data.review_entries : []
+      const normalized = reviewEntries.map((entry, index) => ({
+        id: `${entry.created_at || index}-${index}`,
+        userMessage: entry.user_message || '',
+        assistantMessage: entry.assistant_message || '',
+        products: Array.isArray(entry.products) ? entry.products : [],
+      }))
+      setEntries(normalized.reverse())
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Unable to load review history.')
+    } finally {
+      if (!silent) setLoading(false)
     }
-
-    loadHistory()
-    return () => { alive = false }
   }, [])
 
-  const handleTryOn = (garmentUrl, category) => {
+  useEffect(() => {
+    loadHistory()
+    const intervalId = window.setInterval(() => loadHistory(true), 4000)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [loadHistory])
+
+  const handleTryOn = (garmentUrl, category, title, productId) => {
     const params = new URLSearchParams({ garment: garmentUrl })
     if (category) params.set('type', category)
+    if (title) params.set('title', title)
+    if (productId) params.set('productId', productId)
     navigate(`/try-on?${params.toString()}`)
   }
 
@@ -103,6 +104,14 @@ export default function ReviewHistoryPage() {
           <p className="mt-4 max-w-3xl text-base leading-8" style={{ color: '#746761' }}>
             This page keeps the recommendation batches from your current signed-in session. Logging out clears this working review trail after its summary is flushed into long-term memory.
           </p>
+          <button
+            type="button"
+            onClick={() => loadHistory()}
+            className="mt-5 rounded-full px-4 py-2 text-xs border"
+            style={{ borderColor: '#E8D7CC', color: '#8C7B75', backgroundColor: '#FFFCF8' }}
+          >
+            Refresh session history
+          </button>
         </motion.div>
 
         {loading ? (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import api from '../api/client'
 import { AuthContext, AUTH_TOKEN_KEY } from './auth-context'
+import { clearStyleSessionId, getStyleSessionId } from '../lib/styleSession'
 
 const USER_PROFILES_KEY = 'tryon_user_profiles'
 const AVATAR_COLORS = [
@@ -120,7 +121,9 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     try {
       if (localStorage.getItem(AUTH_TOKEN_KEY)) {
-        await api.post('/memory/session/flush')
+        await api.post('/memory/session/flush', null, {
+          params: { session_id: getStyleSessionId() },
+        })
       }
     } catch {
       // Ignore flush errors during logout so auth state still clears locally.
@@ -128,6 +131,7 @@ export function AuthProvider({ children }) {
     persistToken(null)
     setUser(null)
     setProfile(null)
+    clearStyleSessionId()
   }, [persistToken])
 
   const updateProfile = useCallback((updates) => {

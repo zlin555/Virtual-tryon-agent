@@ -9,6 +9,7 @@ import StylePage from './pages/StylePage'
 import AuthPage from './pages/AuthPage'
 import ReviewHistoryPage from './pages/account/ReviewHistoryPage'
 import AccountShellPage from './pages/account/AccountShellPage'
+import SettingsPage from './pages/account/SettingsPage'
 
 const pageVariants = {
   initial: { opacity: 0, y: 16 },
@@ -30,7 +31,7 @@ function AnimatedRoutes() {
           <Route path="/account/review-history" element={<ReviewHistoryPage />} />
           <Route path="/account/purchase-history" element={<AccountShellPage section="purchase" />} />
           <Route path="/account/token-purchase" element={<AccountShellPage section="tokens" />} />
-          <Route path="/account/settings" element={<AccountShellPage section="settings" />} />
+          <Route path="/account/settings" element={<SettingsPage />} />
         </Routes>
       </motion.div>
     </AnimatePresence>
