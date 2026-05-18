@@ -104,7 +104,37 @@ def _extract_json_object(text: str) -> Optional[dict]:
         parsed = json.loads(cleaned)
         return parsed if isinstance(parsed, dict) else None
     except (json.JSONDecodeError, ValueError):
-        return None
+        pass
+
+    fenced_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    if fenced_match:
+        try:
+            parsed = json.loads(fenced_match.group(1))
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    object_match = re.search(r"(\{[\s\S]*\})", cleaned)
+    if object_match:
+        try:
+            parsed = json.loads(object_match.group(1))
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return None
+
+
+def _response_content_to_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                parts.append(item["text"])
+        return "\n".join(parts)
+    return ""
 
 
 def _embed_text(text: str) -> Optional[List[float]]:
@@ -684,15 +714,7 @@ def agent_chat(
         memory_backend=memory_backend,
         cached_turn_count=cached_turn_count,
         display_language=display_language,
-        retrieved_memories=[
-            {
-                "id": memory.id,
-                "memory_type": memory.memory_type,
-                "memory_text": memory.memory_text,
-                "confidence": memory.confidence,
-            }
-            for memory in relevant_memories
-        ],
+        retrieved_memories=_localize_retrieved_memories(relevant_memories, display_language),
     )
 
 
@@ -765,7 +787,7 @@ def _translate_chat_payload_to_english(req: "ChatRequest") -> tuple[str, List["C
                 ),
             }
         ])
-        parsed = _extract_json_object(getattr(response, "content", ""))
+        parsed = _extract_json_object(_response_content_to_text(getattr(response, "content", "")))
         if parsed:
             translated_message = (parsed.get("message_en") or "").strip() or req.message
             history_items = parsed.get("history_en") or []
@@ -786,6 +808,41 @@ def _translate_chat_payload_to_english(req: "ChatRequest") -> tuple[str, List["C
     return req.message, req.history
 
 
+def _translate_text_batch_to_chinese(texts: List[str], *, context_label: str) -> List[str]:
+    if not texts:
+        return []
+
+    non_empty = [text for text in texts if (text or "").strip()]
+    if not non_empty:
+        return texts
+
+    try:
+        model = _get_translation_model()
+        payload = {"texts": texts}
+        response = model.invoke([
+            {
+                "role": "user",
+                "content": (
+                    f"Translate these {context_label} texts into natural Simplified Chinese for a fashion shopping app. "
+                    "Return strict JSON with a single key translations containing an array of strings in the same order. "
+                    "Preserve IDs, URLs, brand names, and numbers exactly when they appear.\n\n"
+                    + json.dumps(payload, ensure_ascii=False)
+                ),
+            }
+        ])
+        parsed = _extract_json_object(_response_content_to_text(getattr(response, "content", "")))
+        translations = parsed.get("translations") if parsed else None
+        if isinstance(translations, list) and len(translations) == len(texts):
+            return [
+                translation.strip() if isinstance(translation, str) and translation.strip() else original
+                for original, translation in zip(texts, translations)
+            ]
+    except Exception as exc:
+        print(f"[translation] Batch translation failed for {context_label}: {exc}")
+
+    return texts
+
+
 def _localize_chat_output(
     *,
     response_text: str,
@@ -795,122 +852,92 @@ def _localize_chat_output(
     if target_language != "zh":
         return response_text, search_results
 
-    product_payload = []
-    for index, product in enumerate(search_results):
+    localized_response = _translate_text_batch_to_chinese([response_text], context_label="assistant response")[0]
+    merged_results = [json.loads(json.dumps(product)) for product in search_results]
+
+    titles = [product.get("title") or "" for product in merged_results]
+    translated_titles = _translate_text_batch_to_chinese(titles, context_label="product title")
+
+    color_values = []
+    article_values = []
+    usage_values = []
+    category_values = []
+    for product in merged_results:
         metadata = product.get("metadata") or {}
-        product_payload.append({
-            "index": index,
-            "title": product.get("title"),
-            "color": metadata.get("color"),
-            "articleType": metadata.get("articleType"),
-            "usage": metadata.get("usage"),
-            "category": metadata.get("category"),
-        })
+        color_values.append(metadata.get("color") or "")
+        article_values.append(metadata.get("articleType") or "")
+        usage_values.append(metadata.get("usage") or "")
+        category_values.append(metadata.get("category") or "")
 
-    try:
-        model = _get_translation_model()
-        response = model.invoke([
-            {
-                "role": "user",
-                "content": (
-                    "Translate this fashion assistant output into Simplified Chinese for frontend display. "
-                    "Return strict JSON with keys response_zh and products_zh. "
-                    "products_zh must be an array with items containing index plus translated human-readable fields title, color, articleType, usage, and category. "
-                    "Do not invent IDs, URLs, or extra products.\n\n"
-                    + json.dumps({
-                        "response": response_text,
-                        "products": product_payload,
-                    }, ensure_ascii=False)
-                ),
-            }
-        ])
-        parsed = _extract_json_object(getattr(response, "content", ""))
-        if not parsed:
-            return response_text, search_results
+    translated_colors = _translate_text_batch_to_chinese(color_values, context_label="product color")
+    translated_articles = _translate_text_batch_to_chinese(article_values, context_label="product article type")
+    translated_usages = _translate_text_batch_to_chinese(usage_values, context_label="product usage")
+    translated_categories = _translate_text_batch_to_chinese(category_values, context_label="product category")
 
-        localized_response = (parsed.get("response_zh") or "").strip() or response_text
-        localized_products = parsed.get("products_zh") or []
-        merged_results = [json.loads(json.dumps(product)) for product in search_results]
+    for index, product in enumerate(merged_results):
+        if translated_titles[index]:
+            product["title"] = translated_titles[index]
+        metadata = product.setdefault("metadata", {})
+        if translated_colors[index]:
+            metadata["color"] = translated_colors[index]
+        if translated_articles[index]:
+            metadata["articleType"] = translated_articles[index]
+        if translated_usages[index]:
+            metadata["usage"] = translated_usages[index]
+        if translated_categories[index]:
+            metadata["category"] = translated_categories[index]
 
-        if isinstance(localized_products, list):
-            for item in localized_products:
-                if not isinstance(item, dict):
-                    continue
-                index = item.get("index")
-                if not isinstance(index, int) or index < 0 or index >= len(merged_results):
-                    continue
-                if item.get("title"):
-                    merged_results[index]["title"] = item["title"]
-                metadata = merged_results[index].setdefault("metadata", {})
-                for field in ("color", "articleType", "usage", "category"):
-                    if item.get(field):
-                        metadata[field] = item[field]
+    return localized_response, merged_results
 
-        return localized_response, merged_results
-    except Exception as exc:
-        print(f"[translation] Output localization failed: {exc}")
-        return response_text, search_results
+
+def _localize_retrieved_memories(memories: List[UserLongTermMemory], target_language: str) -> List[dict]:
+    payload = [
+        {
+            "id": memory.id,
+            "memory_type": memory.memory_type,
+            "memory_text": memory.memory_text,
+            "confidence": memory.confidence,
+        }
+        for memory in memories
+    ]
+    if target_language != "zh" or not payload:
+        return payload
+
+    translated_texts = _translate_text_batch_to_chinese(
+        [item["memory_text"] for item in payload],
+        context_label="retrieved long-term memory",
+    )
+    for item, translated_text in zip(payload, translated_texts):
+        item["memory_text"] = translated_text
+    return payload
 
 
 def _localize_style_summary(summary_text: str, memories: List[UserLongTermMemory], target_language: str) -> tuple[str, List[UserLongTermMemory]]:
     if target_language != "zh" or not summary_text:
         return summary_text, memories
 
-    try:
-        model = _get_translation_model()
-        payload = {
-            "summary": summary_text,
-            "memories": [
-                {
-                    "id": memory.id,
-                    "memory_type": memory.memory_type,
-                    "memory_text": memory.memory_text,
-                }
-                for memory in memories[:12]
-            ],
-        }
-        response = model.invoke([
-            {
-                "role": "user",
-                "content": (
-                    "Translate this user style summary and memory texts into Simplified Chinese. "
-                    "Return strict JSON with keys summary_zh and memories_zh. "
-                    "memories_zh must be an array of objects with id and memory_text. Preserve ids exactly.\n\n"
-                    + json.dumps(payload, ensure_ascii=False)
-                ),
-            }
-        ])
-        parsed = _extract_json_object(getattr(response, "content", ""))
-        if not parsed:
-            return summary_text, memories
+    localized_summary = _translate_text_batch_to_chinese([summary_text], context_label="long-term style summary")[0]
+    translated_memory_texts = _translate_text_batch_to_chinese(
+        [memory.memory_text for memory in memories],
+        context_label="long-term memory entry",
+    )
 
-        localized_summary = (parsed.get("summary_zh") or "").strip() or summary_text
-        translated_map = {}
-        for item in parsed.get("memories_zh") or []:
-            if isinstance(item, dict) and item.get("id") and item.get("memory_text"):
-                translated_map[item["id"]] = item["memory_text"]
+    localized_memories = []
+    for memory, translated_text in zip(memories, translated_memory_texts):
+        cloned = UserLongTermMemory(
+            id=memory.id,
+            user_id=memory.user_id,
+            memory_type=memory.memory_type,
+            memory_text=translated_text or memory.memory_text,
+            confidence=memory.confidence,
+            source_session_id=memory.source_session_id,
+            metadata_json=memory.metadata_json,
+        )
+        cloned.created_at = memory.created_at
+        cloned.updated_at = memory.updated_at
+        localized_memories.append(cloned)
 
-        localized_memories = []
-        for memory in memories:
-            if memory.id in translated_map:
-                cloned = UserLongTermMemory(
-                    id=memory.id,
-                    user_id=memory.user_id,
-                    memory_type=memory.memory_type,
-                    memory_text=translated_map[memory.id],
-                    confidence=memory.confidence,
-                    source_session_id=memory.source_session_id,
-                    metadata_json=memory.metadata_json,
-                )
-                cloned.created_at = memory.created_at
-                cloned.updated_at = memory.updated_at
-                localized_memories.append(cloned)
-            else:
-                localized_memories.append(memory)
-        return localized_summary, localized_memories
-    except Exception as exc:
-        print(f"[translation] Style summary localization failed: {exc}")
-        return summary_text, memories
+    return localized_summary, localized_memories
 
 
 def _restore_saved_item_product(saved_item: UserSavedItem) -> SavedItemRestoreResponse:
