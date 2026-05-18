@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
+import { useLanguage } from '../../context/LanguageContext'
 import { getStyleSessionId } from '../../lib/styleSession'
 
-function HistoryProductCard({ product, onTryOn }) {
+function HistoryProductCard({ product, onTryOn, t }) {
   const imageUrl = product.image_url || product.imageUrl
   return (
     <div
@@ -37,7 +38,7 @@ function HistoryProductCard({ product, onTryOn }) {
           className="mt-4 w-full rounded-full py-2 text-xs text-white"
           style={{ backgroundColor: '#C97B84' }}
         >
-          Send to Try On
+          {t('review.sendToTryOn')}
         </button>
       </div>
     </div>
@@ -46,6 +47,7 @@ function HistoryProductCard({ product, onTryOn }) {
 
 export default function ReviewHistoryPage() {
   const navigate = useNavigate()
+  const { t } = useLanguage()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -66,7 +68,7 @@ export default function ReviewHistoryPage() {
       }))
       setEntries(normalized.reverse())
     } catch (err) {
-      setError(err.response?.data?.detail || err.message || 'Unable to load review history.')
+      setError(err.response?.data?.detail || err.message || t('review.unableLoad'))
     } finally {
       if (!silent) setLoading(false)
     }
@@ -93,16 +95,16 @@ export default function ReviewHistoryPage() {
       <div className="max-w-6xl mx-auto">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
           <p className="text-xs uppercase tracking-[0.3em]" style={{ color: '#C97B84' }}>
-            Review History
+            {t('review.eyebrow')}
           </p>
           <h1
             className="mt-4 text-5xl font-serif"
             style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}
           >
-            Every search in this session
+            {t('review.title')}
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-8" style={{ color: '#746761' }}>
-            This page keeps the recommendation batches from your current signed-in session. Logging out clears this working review trail after its summary is flushed into long-term memory.
+            {t('review.body')}
           </p>
           <button
             type="button"
@@ -110,13 +112,13 @@ export default function ReviewHistoryPage() {
             className="mt-5 rounded-full px-4 py-2 text-xs border"
             style={{ borderColor: '#E8D7CC', color: '#8C7B75', backgroundColor: '#FFFCF8' }}
           >
-            Refresh session history
+            {t('review.refresh')}
           </button>
         </motion.div>
 
         {loading ? (
           <div className="mt-10 rounded-[28px] border p-8" style={{ backgroundColor: '#FFFCF8', borderColor: '#E8D7CC' }}>
-            <p className="text-sm" style={{ color: '#8C7B75' }}>Loading review history...</p>
+            <p className="text-sm" style={{ color: '#8C7B75' }}>{t('review.loading')}</p>
           </div>
         ) : error ? (
           <div className="mt-10 rounded-[28px] border p-8" style={{ backgroundColor: '#FFF2F2', borderColor: '#E7B8BD', color: '#A14A57' }}>
@@ -125,7 +127,7 @@ export default function ReviewHistoryPage() {
         ) : entries.length === 0 ? (
           <div className="mt-10 rounded-[28px] border p-8" style={{ backgroundColor: '#FFFCF8', borderColor: '#E8D7CC' }}>
             <p className="text-sm" style={{ color: '#8C7B75' }}>
-              No recommendation batches have been generated in this session yet.
+              {t('review.empty')}
             </p>
           </div>
         ) : (
@@ -158,12 +160,13 @@ export default function ReviewHistoryPage() {
                           key={`${entry.id}-${product.title}-${index}`}
                           product={product}
                           onTryOn={handleTryOn}
+                          t={t}
                         />
                       ))}
                     </div>
                   ) : (
                     <p className="text-sm" style={{ color: '#8C7B75' }}>
-                      This turn did not store a recommendation grid.
+                      {t('review.noGrid')}
                     </p>
                   )}
                 </div>

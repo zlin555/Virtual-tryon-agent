@@ -1,24 +1,25 @@
 import { motion } from 'framer-motion'
-
-const COPY = {
-  purchase: {
-    eyebrow: 'Purchase History',
-    title: 'Your future purchase archive',
-    description: 'Orders, reorder paths, and style follow-ups can live here once checkout and product ownership are connected.',
-  },
-  tokens: {
-    eyebrow: 'Token Purchase',
-    title: 'Credits and usage will land here',
-    description: 'This page is ready for try-on credits, premium memory tiers, and any future balance or billing controls.',
-  },
-  settings: {
-    eyebrow: 'Settings',
-    title: 'A clean home for account controls',
-    description: 'Profile controls, avatar preferences, notification settings, and memory permissions can expand here later.',
-  },
-}
+import { useLanguage } from '../../context/LanguageContext'
 
 export default function AccountShellPage({ section }) {
+  const { t } = useLanguage()
+  const COPY = {
+    purchase: {
+      eyebrow: t('account.purchaseEyebrow'),
+      title: t('account.purchaseTitle'),
+      description: t('account.purchaseDescription'),
+    },
+    tokens: {
+      eyebrow: t('account.tokensEyebrow'),
+      title: t('account.tokensTitle'),
+      description: t('account.tokensDescription'),
+    },
+    settings: {
+      eyebrow: t('account.settingsEyebrow'),
+      title: t('account.settingsTitle'),
+      description: t('account.settingsDescription'),
+    },
+  }
   const content = COPY[section] || COPY.settings
 
   return (
@@ -45,14 +46,14 @@ export default function AccountShellPage({ section }) {
           transition={{ delay: 0.08 }}
           className="mt-10 grid md:grid-cols-2 gap-6"
         >
-          {[
+          {[ 
             {
-              title: 'Experience placeholder',
-              body: 'The route, layout, and visual language are in place now, so we can plug in real account data next without rebuilding the page structure.',
+              title: t('account.experiencePlaceholder'),
+              body: t('account.experienceBody'),
             },
             {
-              title: 'Next backend hook',
-              body: 'When you are ready, this section can connect directly to the matching API endpoints and database tables for the selected account feature.',
+              title: t('account.backendHook'),
+              body: t('account.backendHookBody'),
             },
           ].map((card) => (
             <div

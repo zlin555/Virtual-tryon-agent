@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { SavedLooksProvider } from './context/SavedLooksContext'
 import { AuthProvider } from './context/AuthContext'
+import { LanguageProvider } from './context/LanguageContext'
 import Navbar from './components/layout/Navbar'
 import HomePage from './pages/HomePage'
 import TryOnPage from './pages/TryOnPage'
@@ -41,14 +42,16 @@ function AnimatedRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <SavedLooksProvider>
-          <Navbar />
-          <div style={{ paddingTop: 64 }}>
-            <AnimatedRoutes />
-          </div>
-        </SavedLooksProvider>
-      </AuthProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <SavedLooksProvider>
+            <Navbar />
+            <div style={{ paddingTop: 64 }}>
+              <AnimatedRoutes />
+            </div>
+          </SavedLooksProvider>
+        </AuthProvider>
+      </LanguageProvider>
     </BrowserRouter>
   )
 }

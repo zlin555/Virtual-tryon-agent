@@ -1,20 +1,11 @@
 import { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import api from '../../api/client'
+import { useLanguage } from '../../context/LanguageContext'
 
-/**
- * Reusable image input: tab between URL paste and file upload.
- * On file drop, automatically uploads to imgbb via /api/upload-image
- * and calls onUrlReady(url) once the public URL is available.
- *
- * Props:
- *   label        – field label string
- *   value        – current URL string (controlled)
- *   onChange     – (url: string) => void
- *   preview      – boolean, show inline preview thumbnail
- */
 export default function ImageInput({ label, value, onChange }) {
-  const [tab, setTab] = useState('url') // 'url' | 'upload'
+  const { isChinese } = useLanguage()
+  const [tab, setTab] = useState('url')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [localPreview, setLocalPreview] = useState(null)
@@ -24,7 +15,6 @@ export default function ImageInput({ label, value, onChange }) {
     if (!file) return
     setUploadError('')
     setUploading(true)
-    // Local object URL for instant preview while uploading
     const objectUrl = URL.createObjectURL(file)
     setLocalPreview(objectUrl)
 
@@ -36,12 +26,12 @@ export default function ImageInput({ label, value, onChange }) {
       })
       onChange(data.image_url)
     } catch (err) {
-      setUploadError(err.response?.data?.detail || 'Upload failed. Try a URL instead.')
+      setUploadError(err.response?.data?.detail || (isChinese ? '上传失败，可以先尝试直接粘贴图片链接。' : 'Upload failed. Try a URL instead.'))
       setLocalPreview(null)
     } finally {
       setUploading(false)
     }
-  }, [onChange])
+  }, [isChinese, onChange])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -55,19 +45,18 @@ export default function ImageInput({ label, value, onChange }) {
     <div className="flex flex-col gap-2">
       <span className="text-sm font-medium" style={{ color: '#3D3535' }}>{label}</span>
 
-      {/* Tab switcher */}
       <div className="flex rounded-full overflow-hidden border text-sm" style={{ borderColor: '#E8B4BA' }}>
-        {['url', 'upload'].map((t) => (
+        {['url', 'upload'].map((tabKey) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={tabKey}
+            onClick={() => setTab(tabKey)}
             className="flex-1 py-1.5 transition-colors duration-200 capitalize"
             style={{
-              backgroundColor: tab === t ? '#C97B84' : 'transparent',
-              color: tab === t ? 'white' : '#8C7B75',
+              backgroundColor: tab === tabKey ? '#C97B84' : 'transparent',
+              color: tab === tabKey ? 'white' : '#8C7B75',
             }}
           >
-            {t === 'url' ? 'Paste URL' : 'Upload File'}
+            {tabKey === 'url' ? (isChinese ? '粘贴链接' : 'Paste URL') : (isChinese ? '上传文件' : 'Upload File')}
           </button>
         ))}
       </div>
@@ -76,16 +65,16 @@ export default function ImageInput({ label, value, onChange }) {
         <input
           type="url"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="https://…"
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="https://"
           className="w-full px-4 py-3 rounded-xl text-sm outline-none transition-all duration-200"
           style={{
             backgroundColor: '#F0EBE3',
             border: '1.5px solid #E8B4BA',
             color: '#1A1A1A',
           }}
-          onFocus={(e) => (e.target.style.borderColor = '#C97B84')}
-          onBlur={(e) => (e.target.style.borderColor = '#E8B4BA')}
+          onFocus={(event) => { event.target.style.borderColor = '#C97B84' }}
+          onBlur={(event) => { event.target.style.borderColor = '#E8B4BA' }}
         />
       ) : (
         <div
@@ -100,15 +89,19 @@ export default function ImageInput({ label, value, onChange }) {
           {uploading ? (
             <div className="flex flex-col items-center gap-2">
               <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: '#C97B84', borderTopColor: 'transparent' }} />
-              <span className="text-xs" style={{ color: '#8C7B75' }}>Uploading…</span>
+              <span className="text-xs" style={{ color: '#8C7B75' }}>{isChinese ? '上传中...' : 'Uploading...'}</span>
             </div>
           ) : (
             <>
-              <span className="text-2xl">📂</span>
+              <span className="text-2xl">+</span>
               <span className="text-xs text-center" style={{ color: '#8C7B75' }}>
-                {isDragActive ? 'Drop it here!' : 'Drag & drop or click to browse'}
+                {isDragActive
+                  ? (isChinese ? '拖到这里即可' : 'Drop it here!')
+                  : (isChinese ? '拖拽图片到这里，或点击选择文件' : 'Drag & drop or click to browse')}
               </span>
-              <span className="text-xs" style={{ color: '#C97B84' }}>JPG, PNG, WebP</span>
+              <span className="text-xs" style={{ color: '#C97B84' }}>
+                {isChinese ? '支持 JPG、PNG、WebP' : 'JPG, PNG, WebP'}
+              </span>
             </>
           )}
         </div>
@@ -118,7 +111,6 @@ export default function ImageInput({ label, value, onChange }) {
         <p className="text-xs" style={{ color: '#A55E67' }}>{uploadError}</p>
       )}
 
-      {/* Preview thumbnail */}
       {previewSrc && (
         <img
           src={previewSrc}

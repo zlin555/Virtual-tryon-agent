@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import math
+import re
 import threading
 import urllib.request
 from typing import List, Optional
@@ -62,6 +63,7 @@ _agent_ready = threading.Event()
 _agent_load_error: Optional[Exception] = None
 _session_memory = SessionMemoryStore()
 _memory_embeddings = None
+_translation_model = None
 
 
 def _get_memory_embeddings():
@@ -70,6 +72,39 @@ def _get_memory_embeddings():
         model = os.getenv("MEMORY_EMBEDDING_MODEL", "text-embedding-3-small")
         _memory_embeddings = OpenAIEmbeddings(model=model)
     return _memory_embeddings
+
+
+def _get_translation_model():
+    global _translation_model
+    if _translation_model is None:
+        _translation_model = ChatOpenAI(
+            model=os.getenv("TRANSLATION_MODEL", os.getenv("MEMORY_SUMMARY_MODEL", "gpt-4.1-mini")),
+            temperature=0.1,
+        )
+    return _translation_model
+
+
+def _coerce_display_language(display_language: Optional[str]) -> str:
+    normalized = (display_language or "en").strip().lower()
+    return "zh" if normalized in {"zh", "ch", "cn", "zh-cn", "zh-hans"} else "en"
+
+
+def _contains_non_english_chars(text: str) -> bool:
+    return bool(re.search(r"[^\x00-\x7F]", text or ""))
+
+
+def _extract_json_object(text: str) -> Optional[dict]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        parsed = json.loads(cleaned)
+        return parsed if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def _embed_text(text: str) -> Optional[List[float]]:
@@ -329,6 +364,7 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = []
     style_image_url: Optional[str] = None
     session_id: Optional[str] = None
+    display_language: Optional[str] = "en"
 
 
 class ChatResponse(BaseModel):
@@ -339,6 +375,7 @@ class ChatResponse(BaseModel):
     memory_backend: Optional[str] = None
     cached_turn_count: Optional[int] = None
     retrieved_memories: List[dict] = []
+    display_language: Optional[str] = None
 
 
 class UploadResponse(BaseModel):
@@ -516,10 +553,12 @@ def agent_chat(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> ChatResponse:
-    # Build a context-aware message that includes frontend history and cached session memory.
+    display_language = _coerce_display_language(req.display_language)
+    translated_message, translated_history = _translate_chat_payload_to_english(req)
+
     history_text = ""
-    if req.history:
-        for msg in req.history[-6:]:
+    if translated_history:
+        for msg in translated_history[-6:]:
             prefix = "User" if msg.role == "user" else "Assistant"
             history_text += f"{prefix}: {msg.content}\n"
 
@@ -530,7 +569,7 @@ def agent_chat(
         relevant_memories = _retrieve_relevant_memories(
             db,
             user_id=current_user.id,
-            query_text=req.message,
+            query_text=translated_message,
             limit=3,
         )
 
@@ -542,7 +581,7 @@ def agent_chat(
         context_prefix += f"{memory_text}\n\n"
 
     full_message = (
-        f"{context_prefix}{history_text}User: {req.message}" if (context_prefix or history_text) else req.message
+        f"{context_prefix}{history_text}User: {translated_message}" if (context_prefix or history_text) else translated_message
     )
 
     try:
@@ -588,6 +627,12 @@ def agent_chat(
                         search_results.extend(parsed)
                 except (json.JSONDecodeError, ValueError):
                     pass
+
+    response_text, search_results = _localize_chat_output(
+        response_text=response_text,
+        search_results=search_results,
+        target_language=display_language,
+    )
 
     session_id = req.session_id or "primary"
     cached_turn_count = None
@@ -638,6 +683,7 @@ def agent_chat(
         session_id=session_id if current_user else None,
         memory_backend=memory_backend,
         cached_turn_count=cached_turn_count,
+        display_language=display_language,
         retrieved_memories=[
             {
                 "id": memory.id,
@@ -695,6 +741,176 @@ def _build_long_term_style_summary(memories: List[UserLongTermMemory]) -> str:
         print(f"[memory] Style summary generation failed: {exc}")
 
     return "\n".join(prompt_lines)
+
+
+def _translate_chat_payload_to_english(req: "ChatRequest") -> tuple[str, List["ChatMessage"]]:
+    if not (_contains_non_english_chars(req.message) or any(_contains_non_english_chars(msg.content) for msg in req.history)):
+        return req.message, req.history
+
+    try:
+        model = _get_translation_model()
+        payload = {
+            "message": req.message,
+            "history": [{"role": msg.role, "content": msg.content} for msg in req.history[-6:]],
+        }
+        response = model.invoke([
+            {
+                "role": "user",
+                "content": (
+                    "Translate this fashion shopping conversation into concise English for retrieval and agent reasoning. "
+                    "Return strict JSON with keys message_en and history_en. "
+                    "history_en must be an array of objects with role and content, in the same order as the input history. "
+                    "Preserve product IDs, URLs, brand names, and numbers exactly.\n\n"
+                    + json.dumps(payload, ensure_ascii=False)
+                ),
+            }
+        ])
+        parsed = _extract_json_object(getattr(response, "content", ""))
+        if parsed:
+            translated_message = (parsed.get("message_en") or "").strip() or req.message
+            history_items = parsed.get("history_en") or []
+            translated_history = []
+            if isinstance(history_items, list):
+                for original, translated in zip(req.history[-6:], history_items):
+                    if isinstance(translated, dict):
+                        translated_history.append(ChatMessage(
+                            role=translated.get("role") or original.role,
+                            content=(translated.get("content") or original.content).strip(),
+                        ))
+            if len(translated_history) == len(req.history[-6:]):
+                return translated_message, translated_history
+            return translated_message, req.history
+    except Exception as exc:
+        print(f"[translation] Input translation failed: {exc}")
+
+    return req.message, req.history
+
+
+def _localize_chat_output(
+    *,
+    response_text: str,
+    search_results: List[dict],
+    target_language: str,
+) -> tuple[str, List[dict]]:
+    if target_language != "zh":
+        return response_text, search_results
+
+    product_payload = []
+    for index, product in enumerate(search_results):
+        metadata = product.get("metadata") or {}
+        product_payload.append({
+            "index": index,
+            "title": product.get("title"),
+            "color": metadata.get("color"),
+            "articleType": metadata.get("articleType"),
+            "usage": metadata.get("usage"),
+            "category": metadata.get("category"),
+        })
+
+    try:
+        model = _get_translation_model()
+        response = model.invoke([
+            {
+                "role": "user",
+                "content": (
+                    "Translate this fashion assistant output into Simplified Chinese for frontend display. "
+                    "Return strict JSON with keys response_zh and products_zh. "
+                    "products_zh must be an array with items containing index plus translated human-readable fields title, color, articleType, usage, and category. "
+                    "Do not invent IDs, URLs, or extra products.\n\n"
+                    + json.dumps({
+                        "response": response_text,
+                        "products": product_payload,
+                    }, ensure_ascii=False)
+                ),
+            }
+        ])
+        parsed = _extract_json_object(getattr(response, "content", ""))
+        if not parsed:
+            return response_text, search_results
+
+        localized_response = (parsed.get("response_zh") or "").strip() or response_text
+        localized_products = parsed.get("products_zh") or []
+        merged_results = [json.loads(json.dumps(product)) for product in search_results]
+
+        if isinstance(localized_products, list):
+            for item in localized_products:
+                if not isinstance(item, dict):
+                    continue
+                index = item.get("index")
+                if not isinstance(index, int) or index < 0 or index >= len(merged_results):
+                    continue
+                if item.get("title"):
+                    merged_results[index]["title"] = item["title"]
+                metadata = merged_results[index].setdefault("metadata", {})
+                for field in ("color", "articleType", "usage", "category"):
+                    if item.get(field):
+                        metadata[field] = item[field]
+
+        return localized_response, merged_results
+    except Exception as exc:
+        print(f"[translation] Output localization failed: {exc}")
+        return response_text, search_results
+
+
+def _localize_style_summary(summary_text: str, memories: List[UserLongTermMemory], target_language: str) -> tuple[str, List[UserLongTermMemory]]:
+    if target_language != "zh" or not summary_text:
+        return summary_text, memories
+
+    try:
+        model = _get_translation_model()
+        payload = {
+            "summary": summary_text,
+            "memories": [
+                {
+                    "id": memory.id,
+                    "memory_type": memory.memory_type,
+                    "memory_text": memory.memory_text,
+                }
+                for memory in memories[:12]
+            ],
+        }
+        response = model.invoke([
+            {
+                "role": "user",
+                "content": (
+                    "Translate this user style summary and memory texts into Simplified Chinese. "
+                    "Return strict JSON with keys summary_zh and memories_zh. "
+                    "memories_zh must be an array of objects with id and memory_text. Preserve ids exactly.\n\n"
+                    + json.dumps(payload, ensure_ascii=False)
+                ),
+            }
+        ])
+        parsed = _extract_json_object(getattr(response, "content", ""))
+        if not parsed:
+            return summary_text, memories
+
+        localized_summary = (parsed.get("summary_zh") or "").strip() or summary_text
+        translated_map = {}
+        for item in parsed.get("memories_zh") or []:
+            if isinstance(item, dict) and item.get("id") and item.get("memory_text"):
+                translated_map[item["id"]] = item["memory_text"]
+
+        localized_memories = []
+        for memory in memories:
+            if memory.id in translated_map:
+                cloned = UserLongTermMemory(
+                    id=memory.id,
+                    user_id=memory.user_id,
+                    memory_type=memory.memory_type,
+                    memory_text=translated_map[memory.id],
+                    confidence=memory.confidence,
+                    source_session_id=memory.source_session_id,
+                    metadata_json=memory.metadata_json,
+                )
+                cloned.created_at = memory.created_at
+                cloned.updated_at = memory.updated_at
+                localized_memories.append(cloned)
+            else:
+                localized_memories.append(memory)
+        return localized_summary, localized_memories
+    except Exception as exc:
+        print(f"[translation] Style summary localization failed: {exc}")
+        return summary_text, memories
 
 
 def _restore_saved_item_product(saved_item: UserSavedItem) -> SavedItemRestoreResponse:
@@ -917,6 +1133,7 @@ def search_memory(
 
 @app.get("/api/memory/style-summary", response_model=StyleSummaryResponse)
 def get_style_summary(
+    display_language: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StyleSummaryResponse:
@@ -926,9 +1143,15 @@ def get_style_summary(
         .order_by(UserLongTermMemory.updated_at.desc())
         .all()
     )
+    summary_text = _build_long_term_style_summary(memories)
+    localized_summary, localized_memories = _localize_style_summary(
+        summary_text,
+        memories,
+        _coerce_display_language(display_language),
+    )
 
     return StyleSummaryResponse(
-        summary=_build_long_term_style_summary(memories),
+        summary=localized_summary,
         memories_count=len(memories),
         source_memories=[
             MemoryItemResponse(
@@ -939,7 +1162,7 @@ def get_style_summary(
                 source_session_id=memory.source_session_id,
                 metadata_json=memory.metadata_json,
             )
-            for memory in memories[:12]
+            for memory in localized_memories[:12]
         ],
     )
 

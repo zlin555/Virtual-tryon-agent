@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useLanguage } from '../context/LanguageContext'
 import useAuth from '../hooks/useAuth'
 
 export default function AuthPage({ mode = 'login' }) {
   const isRegister = mode === 'register'
   const navigate = useNavigate()
   const { login, register } = useAuth()
+  const { t } = useLanguage()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -22,7 +24,7 @@ export default function AuthPage({ mode = 'login' }) {
       await action({ username, password })
       navigate('/style')
     } catch (err) {
-      setError(err.response?.data?.detail || err.message || 'Authentication failed.')
+      setError(err.response?.data?.detail || err.message || t('auth.authFailed'))
     } finally {
       setLoading(false)
     }
@@ -37,20 +39,20 @@ export default function AuthPage({ mode = 'login' }) {
         style={{ backgroundColor: '#F0EBE3', boxShadow: '0 16px 40px rgba(139,90,80,0.12)' }}
       >
         <p className="text-xs uppercase tracking-widest mb-3" style={{ color: '#C97B84' }}>
-          {isRegister ? 'Create account' : 'Welcome back'}
+          {isRegister ? t('auth.createAccount') : t('auth.welcomeBack')}
         </p>
         <h1 className="text-4xl font-serif mb-2" style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}>
-          {isRegister ? 'Register' : 'Login'}
+          {isRegister ? t('auth.register') : t('auth.login')}
         </h1>
         <p className="text-sm mb-8" style={{ color: '#8C7B75' }}>
           {isRegister
-            ? 'Create a profile now, and future memory features can build on it.'
-            : 'Sign in to connect recommendations with your account.'}
+            ? t('auth.registerBody')
+            : t('auth.loginBody')}
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <label className="flex flex-col gap-2 text-sm" style={{ color: '#3D3535' }}>
-            Username
+            {t('auth.username')}
             <input
               value={username}
               onChange={(event) => setUsername(event.target.value)}
@@ -64,7 +66,7 @@ export default function AuthPage({ mode = 'login' }) {
           </label>
 
           <label className="flex flex-col gap-2 text-sm" style={{ color: '#3D3535' }}>
-            Password
+            {t('auth.password')}
             <input
               type="password"
               value={password}
@@ -90,14 +92,14 @@ export default function AuthPage({ mode = 'login' }) {
             className="mt-2 py-3 rounded-full text-white text-sm font-medium transition-all disabled:opacity-60 hover:scale-105"
             style={{ backgroundColor: '#C97B84' }}
           >
-            {loading ? 'Please wait...' : isRegister ? 'Create Account' : 'Login'}
+            {loading ? t('auth.pleaseWait') : isRegister ? t('auth.createAccountCta') : t('auth.loginCta')}
           </button>
         </form>
 
         <p className="text-sm mt-6 text-center" style={{ color: '#8C7B75' }}>
-          {isRegister ? 'Already have an account?' : 'New here?'}{' '}
+          {isRegister ? t('auth.alreadyHaveAccount') : t('auth.newHere')}{' '}
           <Link to={isRegister ? '/login' : '/register'} style={{ color: '#C97B84' }}>
-            {isRegister ? 'Login' : 'Register'}
+            {isRegister ? t('auth.login') : t('auth.register')}
           </Link>
         </p>
       </motion.div>

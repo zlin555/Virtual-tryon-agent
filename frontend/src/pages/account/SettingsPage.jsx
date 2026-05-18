@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import api from '../../api/client'
+import { useLanguage } from '../../context/LanguageContext'
 
 export default function SettingsPage() {
+  const { t, language } = useLanguage()
   const [summary, setSummary] = useState('')
   const [memoriesCount, setMemoriesCount] = useState(0)
   const [sourceMemories, setSourceMemories] = useState([])
@@ -16,14 +18,16 @@ export default function SettingsPage() {
       setLoading(true)
       setError('')
       try {
-        const { data } = await api.get('/memory/style-summary')
+        const { data } = await api.get('/memory/style-summary', {
+          params: { display_language: language },
+        })
         if (!alive) return
         setSummary(data.summary || '')
         setMemoriesCount(data.memories_count || 0)
         setSourceMemories(Array.isArray(data.source_memories) ? data.source_memories : [])
       } catch (err) {
         if (!alive) return
-        setError(err.response?.data?.detail || err.message || 'Unable to load style summary.')
+        setError(err.response?.data?.detail || err.message || t('settings.unableLoad'))
       } finally {
         if (alive) setLoading(false)
       }
@@ -31,29 +35,29 @@ export default function SettingsPage() {
 
     loadSummary()
     return () => { alive = false }
-  }, [])
+  }, [language, t])
 
   return (
     <div className="min-h-screen px-6 py-16" style={{ backgroundColor: '#FAF7F2' }}>
       <div className="max-w-5xl mx-auto">
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}>
           <p className="text-xs uppercase tracking-[0.3em]" style={{ color: '#C97B84' }}>
-            Settings
+            {t('settings.eyebrow')}
           </p>
           <h1
             className="mt-4 text-5xl font-serif"
             style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}
           >
-            Long-term style summary
+            {t('settings.title')}
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-8" style={{ color: '#746761' }}>
-            This summary is generated from your long-term memory records, so it persists beyond a single session and reflects the preferences the system has retained about your style.
+            {t('settings.body')}
           </p>
         </motion.div>
 
         {loading ? (
           <div className="mt-10 rounded-[28px] border p-8" style={{ backgroundColor: '#FFFCF8', borderColor: '#E8D7CC' }}>
-            <p className="text-sm" style={{ color: '#8C7B75' }}>Generating your style summary...</p>
+            <p className="text-sm" style={{ color: '#8C7B75' }}>{t('settings.loading')}</p>
           </div>
         ) : error ? (
           <div className="mt-10 rounded-[28px] border p-8" style={{ backgroundColor: '#FFF2F2', borderColor: '#E7B8BD', color: '#A14A57' }}>
@@ -71,13 +75,13 @@ export default function SettingsPage() {
             >
               <div className="flex items-center justify-between gap-4">
                 <p className="text-xs uppercase tracking-[0.25em]" style={{ color: '#C97B84' }}>
-                  Persistent Memory Profile
+                  {t('settings.persistentProfile')}
                 </p>
                 <span
                   className="rounded-full px-3 py-1 text-xs"
                   style={{ backgroundColor: '#F1E4E6', color: '#8C4C59' }}
                 >
-                  {memoriesCount} memory entries
+                  {memoriesCount} {t('settings.memoryEntries')}
                 </span>
               </div>
 
@@ -89,7 +93,7 @@ export default function SettingsPage() {
                   <p className="text-sm leading-8 whitespace-pre-line">{summary}</p>
                 ) : (
                   <p className="text-sm leading-8" style={{ color: '#8C7B75' }}>
-                    No long-term style summary is available yet. After more sessions are flushed into memory, this page will start to reflect your stable style preferences.
+                    {t('settings.empty')}
                   </p>
                 )}
               </div>
@@ -107,7 +111,7 @@ export default function SettingsPage() {
                       {memory.memory_type}
                     </p>
                     <span className="text-xs" style={{ color: '#8C7B75' }}>
-                      confidence {memory.confidence.toFixed(2)}
+                      {t('settings.confidence')} {memory.confidence.toFixed(2)}
                     </span>
                   </div>
                   <p className="mt-3 text-sm leading-7" style={{ color: '#746761' }}>

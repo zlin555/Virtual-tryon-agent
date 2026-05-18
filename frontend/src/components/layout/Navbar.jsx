@@ -2,20 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSavedLooks } from '../../context/SavedLooksContext'
+import { useLanguage } from '../../context/LanguageContext'
 import useAuth from '../../hooks/useAuth'
-
-const NAV_LINKS = [
-  { to: '/', label: 'Home' },
-  { to: '/try-on', label: 'Try On' },
-  { to: '/style', label: 'Style Explorer' },
-]
-
-const USER_MENU_ITEMS = [
-  { to: '/account/review-history', label: 'Review History' },
-  { to: '/account/purchase-history', label: 'Purchase History' },
-  { to: '/account/token-purchase', label: 'Token Purchase' },
-  { to: '/account/settings', label: 'Settings' },
-]
 
 function UserAvatar({ profile, username, size = 'md' }) {
   const sizeClass = size === 'lg' ? 'w-14 h-14 text-lg' : 'w-9 h-9 text-sm'
@@ -45,10 +33,22 @@ export default function Navbar() {
   const navigate = useNavigate()
   const { looks, loading: savedLoading, removeLook, restoreLook } = useSavedLooks()
   const { user, profile, logout, updateProfile } = useAuth()
+  const { language, setLanguage, t } = useLanguage()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [avatarNotice, setAvatarNotice] = useState('')
   const menuRef = useRef(null)
+  const navLinks = [
+    { to: '/', label: t('nav.home') },
+    { to: '/try-on', label: t('nav.tryOn') },
+    { to: '/style', label: t('nav.style') },
+  ]
+  const userMenuItems = [
+    { to: '/account/review-history', label: t('nav.reviewHistory') },
+    { to: '/account/purchase-history', label: t('nav.purchaseHistory') },
+    { to: '/account/token-purchase', label: t('nav.tokenPurchase') },
+    { to: '/account/settings', label: t('nav.settings') },
+  ]
 
   useEffect(() => {
     if (!userMenuOpen) return undefined
@@ -87,7 +87,7 @@ export default function Navbar() {
     event.target.value = ''
     if (!file) return
     if (file.size > 1024 * 1024) {
-      setAvatarNotice('Please upload an image smaller than 1 MB for now.')
+      setAvatarNotice(t('nav.avatarTooLarge'))
       return
     }
 
@@ -147,7 +147,7 @@ export default function Navbar() {
         </Link>
 
         <nav className="hidden md:flex items-center gap-8">
-          {NAV_LINKS.map(({ to, label }) => (
+          {navLinks.map(({ to, label }) => (
             <Link
               key={to}
               to={to}
@@ -160,6 +160,29 @@ export default function Navbar() {
         </nav>
 
         <div className="flex items-center gap-4">
+          <div
+            className="flex items-center rounded-full p-1 border"
+            style={{ borderColor: '#E8D7CC', backgroundColor: '#FFFCF8' }}
+          >
+            {[
+              { key: 'en', label: 'EN' },
+              { key: 'zh', label: 'CH' },
+            ].map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setLanguage(option.key)}
+                className="rounded-full px-3 py-1.5 text-xs transition-colors"
+                style={{
+                  backgroundColor: language === option.key ? '#C97B84' : 'transparent',
+                  color: language === option.key ? '#FAF7F2' : '#8C7B75',
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
           {user ? (
             <>
               <div className="relative" ref={menuRef}>
@@ -176,7 +199,7 @@ export default function Navbar() {
                   <div className="hidden sm:block text-left">
                     <p className="text-sm leading-4">{user.username}</p>
                     <p className="text-[11px] leading-4" style={{ color: '#8C7B75' }}>
-                      Profile
+                      {t('nav.profile')}
                     </p>
                   </div>
                 </button>
@@ -212,7 +235,7 @@ export default function Navbar() {
                               {user.username}
                             </p>
                             <p className="text-sm mt-1" style={{ color: '#8C7B75' }}>
-                              Account shortcuts
+                              {t('nav.accountShortcuts')}
                             </p>
                           </div>
                         </div>
@@ -222,7 +245,7 @@ export default function Navbar() {
                             className="cursor-pointer rounded-full px-3 py-2 text-xs transition-colors"
                             style={{ backgroundColor: '#1A1A1A', color: '#FAF7F2' }}
                           >
-                            Upload avatar
+                            {t('nav.uploadAvatar')}
                             <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
                           </label>
                           <button
@@ -231,7 +254,7 @@ export default function Navbar() {
                             className="rounded-full px-3 py-2 text-xs border transition-colors"
                             style={{ borderColor: '#E8B4BA', color: '#8C7B75' }}
                           >
-                            Remove image
+                            {t('nav.removeImage')}
                           </button>
                         </div>
 
@@ -243,7 +266,7 @@ export default function Navbar() {
                       </div>
 
                       <div className="px-5 py-4 space-y-2">
-                        {USER_MENU_ITEMS.map((item) => (
+                        {userMenuItems.map((item) => (
                           <button
                             key={item.to}
                             type="button"
@@ -267,7 +290,7 @@ export default function Navbar() {
                           style={{ backgroundColor: '#1A1A1A', color: '#FAF7F2' }}
                           type="button"
                         >
-                          Logout
+                          {t('nav.logout')}
                         </button>
                       </div>
                     </motion.div>
@@ -280,7 +303,7 @@ export default function Navbar() {
                 className="relative text-sm transition-colors duration-200"
                 style={{ color: '#8C7B75' }}
               >
-                Saved
+                {t('nav.saved')}
                 {looks.length > 0 && (
                   <span
                     className="absolute -top-2 -right-3 w-4 h-4 rounded-full text-white text-[10px] flex items-center justify-center"
@@ -294,14 +317,14 @@ export default function Navbar() {
           ) : (
             <div className="hidden sm:flex items-center gap-3 text-sm">
               <Link to="/login" style={{ color: pathname === '/login' ? '#C97B84' : '#8C7B75' }}>
-                Login
+                {t('nav.login')}
               </Link>
               <Link
                 to="/register"
                 className="px-4 py-1.5 rounded-full text-white"
                 style={{ backgroundColor: '#C97B84' }}
               >
-                Register
+                {t('nav.register')}
               </Link>
             </div>
           )}
@@ -332,22 +355,22 @@ export default function Navbar() {
             >
               <div className="flex items-center justify-between px-6 py-5 border-b" style={{ borderColor: '#E8B4BA' }}>
                 <h2 className="font-serif text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
-                  Saved Looks
+                  {t('nav.savedLooks')}
                 </h2>
-                <button onClick={() => setDrawerOpen(false)} style={{ color: '#8C7B75' }}>Close</button>
+                <button onClick={() => setDrawerOpen(false)} style={{ color: '#8C7B75' }}>{t('nav.close')}</button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
                 {savedLoading ? (
                   <div className="flex flex-col items-center gap-3 mt-16 text-center">
                     <p className="text-sm" style={{ color: '#8C7B75' }}>
-                      Loading saved items...
+                      {t('nav.loadingSaved')}
                     </p>
                   </div>
                 ) : looks.length === 0 ? (
                   <div className="flex flex-col items-center gap-3 mt-16 text-center">
                     <p className="text-sm" style={{ color: '#8C7B75' }}>
-                      No saved garments yet. Save a product from Style Explorer or Try On.
+                      {t('nav.noSaved')}
                     </p>
                   </div>
                 ) : (
@@ -365,7 +388,7 @@ export default function Navbar() {
                             style={{ backgroundColor: 'rgba(0,0,0,0.38)' }}
                           >
                             <span className="text-white text-xs px-3 py-1.5 rounded-full border border-white/60">
-                              Restore to Try On
+                              {t('nav.restoreToTryOn')}
                             </span>
                           </div>
                         </button>
@@ -379,7 +402,7 @@ export default function Navbar() {
                             className="mt-3 text-xs px-3 py-1.5 rounded-full border transition-colors"
                             style={{ borderColor: '#E8B4BA', color: '#8C7B75' }}
                           >
-                            Remove
+                            {t('nav.remove')}
                           </button>
                         </div>
                       </div>

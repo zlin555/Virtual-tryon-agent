@@ -32,12 +32,12 @@ function extractStyleKeywords(response) {
   return [...new Set([...termMatches, ...quoted])].slice(0, 10)
 }
 
-async function waitForAgent(onStatus) {
+async function waitForAgent(onStatus, statusPrefix = 'AI model loading...') {
   for (let i = 0; i < 36; i += 1) {
     try {
       const { data } = await api.get('/ready')
       if (data.ready) return true
-      onStatus(`AI model loading... ${Math.round((i + 1) * 5)}s`)
+      onStatus(`${statusPrefix} ${Math.round((i + 1) * 5)}s`)
     } catch {
       // Ignore transient readiness checks.
     }
@@ -46,13 +46,25 @@ async function waitForAgent(onStatus) {
   return false
 }
 
+function buildCopy(displayLanguage) {
+  const zh = displayLanguage === 'zh'
+  return {
+    loading: zh ? 'AI 模型加载中，首次启动大约需要一分钟' : 'AI model loading... this takes about a minute on first run',
+    timeout: zh ? '模型启动时间过长，请刷新后再试。' : 'Agent took too long to load. Please refresh and try again.',
+    updating: zh ? '暂时无法更新推荐结果。' : 'Unable to update recommendations right now.',
+    network: zh ? '网络请求失败。' : 'Network error.',
+    statusPrefix: zh ? 'AI 模型加载中...' : 'AI model loading...',
+  }
+}
+
 export default function useAgentChat() {
   const [turns, setTurns] = useState([])
   const [loading, setLoading] = useState(false)
   const [warmingUp, setWarmingUp] = useState('')
   const [error, setError] = useState('')
 
-  const sendMessage = useCallback(async (message, styleImageUrl = null) => {
+  const sendMessage = useCallback(async (message, styleImageUrl = null, displayLanguage = 'en') => {
+    const copy = buildCopy(displayLanguage)
     setLoading(true)
     setError('')
     setWarmingUp('')
@@ -60,10 +72,10 @@ export default function useAgentChat() {
     try {
       const { data } = await api.get('/ready')
       if (!data.ready) {
-        setWarmingUp('AI model loading... this takes about a minute on first run')
-        const ready = await waitForAgent((status) => setWarmingUp(status))
+        setWarmingUp(copy.loading)
+        const ready = await waitForAgent((status) => setWarmingUp(status), copy.statusPrefix)
         if (!ready) {
-          setError('Agent took too long to load. Please refresh and try again.')
+          setError(copy.timeout)
           setLoading(false)
           setWarmingUp('')
           return null
@@ -84,6 +96,7 @@ export default function useAgentChat() {
         message,
         history: plainHistory.slice(-6),
         session_id: getStyleSessionId(),
+        display_language: displayLanguage,
         ...(styleImageUrl ? { style_image_url: styleImageUrl } : {}),
       })
 
@@ -104,12 +117,12 @@ export default function useAgentChat() {
       setTurns((current) => [...current, nextTurn])
       return nextTurn
     } catch (err) {
-      const messageText = err.response?.data?.detail || err.message || 'Network error.'
+      const messageText = err.response?.data?.detail || err.message || copy.network
       setError(messageText)
       const nextTurn = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         userMessage: message,
-        assistantMessage: `Unable to update recommendations right now. ${messageText}`,
+        assistantMessage: `${copy.updating} ${messageText}`,
         recommendations: [],
         styleDNA: [],
         retrievedMemories: [],

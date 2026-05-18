@@ -5,6 +5,7 @@ import { useDropzone } from 'react-dropzone'
 import api from '../api/client'
 import useAgentChat from '../hooks/useAgentChat'
 import { useSavedLooks } from '../context/SavedLooksContext'
+import { useLanguage } from '../context/LanguageContext'
 import useAuth from '../hooks/useAuth'
 
 const AESTHETICS = [
@@ -66,7 +67,7 @@ function ImageCell({ onFile }) {
   )
 }
 
-function RecommendationCard({ rec, onTryOn, onSave, canSave }) {
+function RecommendationCard({ rec, onTryOn, onSave, canSave, t }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
@@ -98,7 +99,7 @@ function RecommendationCard({ rec, onTryOn, onSave, canSave }) {
               className="flex-1 py-2 rounded-full text-xs border transition-all duration-200 hover:scale-[1.02]"
               style={{ borderColor: '#C97B84', color: '#C97B84' }}
             >
-              Save
+              {t('style.save')}
             </button>
           )}
           <button
@@ -106,7 +107,7 @@ function RecommendationCard({ rec, onTryOn, onSave, canSave }) {
             className="flex-1 py-2 rounded-full text-xs text-white transition-all duration-200 hover:scale-[1.02]"
             style={{ backgroundColor: '#C97B84' }}
           >
-            Try On
+            {t('style.tryOn')}
           </button>
         </div>
       </div>
@@ -114,7 +115,7 @@ function RecommendationCard({ rec, onTryOn, onSave, canSave }) {
   )
 }
 
-function StyleDNARow({ keywords = [] }) {
+function StyleDNARow({ keywords = [], t }) {
   if (!keywords.length) return null
   return (
     <div
@@ -125,7 +126,7 @@ function StyleDNARow({ keywords = [] }) {
       }}
     >
       <p className="text-[11px] uppercase tracking-[0.25em] mb-3" style={{ color: '#E8B4BA' }}>
-        Style DNA
+        {t('style.styleDna')}
       </p>
       <div className="flex flex-wrap gap-2">
         {keywords.map((tag) => (
@@ -142,7 +143,7 @@ function StyleDNARow({ keywords = [] }) {
   )
 }
 
-function AssistantTurn({ turn, onTryOn, onSave, canSave }) {
+function AssistantTurn({ turn, onTryOn, onSave, canSave, t }) {
   const assistantText = turn.assistantMessage
     .replace(/```json[\s\S]*?```/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
@@ -156,11 +157,11 @@ function AssistantTurn({ turn, onTryOn, onSave, canSave }) {
           className="max-w-3xl rounded-[28px] px-6 py-5 border text-sm leading-7"
           style={{ backgroundColor: '#FFFCF8', borderColor: '#E8D7CC', color: '#2F2928' }}
         >
-          {assistantText || 'Recommendations updated.'}
+          {assistantText || t('style.recommendationsUpdated')}
         </div>
       </div>
 
-      {turn.styleDNA?.length > 0 && <StyleDNARow keywords={turn.styleDNA} />}
+      {turn.styleDNA?.length > 0 && <StyleDNARow keywords={turn.styleDNA} t={t} />}
 
       {turn.recommendations?.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
@@ -171,6 +172,7 @@ function AssistantTurn({ turn, onTryOn, onSave, canSave }) {
               onTryOn={onTryOn}
               onSave={onSave}
               canSave={canSave}
+              t={t}
             />
           ))}
         </div>
@@ -183,6 +185,7 @@ export default function StylePage() {
   const navigate = useNavigate()
   const { saveLook } = useSavedLooks()
   const { user } = useAuth()
+  const { t, optionLabel, language, isChinese } = useLanguage()
   const { turns, loading, warmingUp, error, sendMessage, reset } = useAgentChat()
 
   const [description, setDescription] = useState('')
@@ -207,30 +210,36 @@ export default function StylePage() {
   }
 
   const handleAnalyze = async () => {
-    const genderText = selectedGender ? `Gender: ${selectedGender}.` : ''
-    const aestheticsText = selectedAesthetics.length ? `Style aesthetics: ${selectedAesthetics.join(', ')}.` : ''
-    const occasionsText = selectedOccasions.length ? `Occasions: ${selectedOccasions.join(', ')}.` : ''
+    const genderLabel = selectedGender ? optionLabel('gender', selectedGender) : ''
+    const aestheticLabels = selectedAesthetics.map((value) => optionLabel('aesthetic', value))
+    const occasionLabels = selectedOccasions.map((value) => optionLabel('occasion', value))
+
+    const genderText = genderLabel ? `${t('style.gender')}: ${genderLabel}.` : ''
+    const aestheticsText = aestheticLabels.length ? `${t('style.aesthetic')}: ${aestheticLabels.join(', ')}.` : ''
+    const occasionsText = occasionLabels.length ? `${t('style.occasion')}: ${occasionLabels.join(', ')}.` : ''
 
     const prompt = [
       description,
       genderText,
       aestheticsText,
       occasionsText,
-      'Based on this, analyze my style profile and recommend 9 outfits that match these preferences.',
+      isChinese
+        ? '请基于这些信息分析我的风格画像，并推荐 9 套最匹配的穿搭。'
+        : 'Based on this, analyze my style profile and recommend 9 outfits that match these preferences.',
     ].filter(Boolean).join(' ')
 
     const styleImageUrl = refImageUrls.find(Boolean) || null
 
     reset()
     setAnalyzed(true)
-    await sendMessage(prompt, styleImageUrl)
+    await sendMessage(prompt, styleImageUrl, language)
   }
 
   const handleChatSend = async () => {
     if (!chatInput.trim() || loading) return
     const nextMessage = chatInput.trim()
     setChatInput('')
-    await sendMessage(nextMessage)
+    await sendMessage(nextMessage, null, language)
   }
 
   const handleBackForNewChat = () => {
@@ -263,9 +272,9 @@ export default function StylePage() {
             className="text-center mb-14"
           >
             <h1 className="text-5xl font-serif mb-3" style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}>
-              Style Explorer
+              {t('style.title')}
             </h1>
-            <p style={{ color: '#8C7B75' }}>Tell us your aesthetic. We&apos;ll curate outfits made for you.</p>
+            <p style={{ color: '#8C7B75' }}>{t('style.subtitle')}</p>
           </motion.div>
 
           <motion.div
@@ -275,18 +284,18 @@ export default function StylePage() {
             style={{ backgroundColor: '#F0EBE3', boxShadow: '0 18px 40px rgba(139,90,80,0.08)' }}
           >
             <label className="block text-sm font-medium mb-2" style={{ color: '#3D3535' }}>
-              Describe your personal style
+              {t('style.describeLabel')}
             </label>
             <textarea
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               rows={5}
-              placeholder="e.g. I love clean lines, neutral tones, and relaxed silhouettes that work from the office to dinner..."
+              placeholder={t('style.describePlaceholder')}
               className="w-full px-4 py-3 rounded-xl text-sm outline-none resize-y mb-6"
               style={{ backgroundColor: '#FAF7F2', border: '1.5px solid #E8B4BA', color: '#1A1A1A' }}
             />
 
-            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>Gender</p>
+            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>{t('style.gender')}</p>
             <div className="flex flex-wrap gap-2 mb-6">
               {GENDERS.map((gender) => (
                 <button
@@ -300,12 +309,12 @@ export default function StylePage() {
                     border: `1px solid ${selectedGender === gender ? '#6B8CAE' : '#E8B4BA'}`,
                   }}
                 >
-                  {gender}
+                  {optionLabel('gender', gender)}
                 </button>
               ))}
             </div>
 
-            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>Aesthetic</p>
+            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>{t('style.aesthetic')}</p>
             <div className="flex flex-wrap gap-2 mb-6">
               {AESTHETICS.map((aesthetic) => (
                 <button
@@ -319,12 +328,12 @@ export default function StylePage() {
                     border: `1px solid ${selectedAesthetics.includes(aesthetic) ? '#C97B84' : '#E8B4BA'}`,
                   }}
                 >
-                  {aesthetic}
+                  {optionLabel('aesthetic', aesthetic)}
                 </button>
               ))}
             </div>
 
-            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>Occasion</p>
+            <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>{t('style.occasion')}</p>
             <div className="flex flex-wrap gap-2 mb-6">
               {OCCASIONS.map((occasion) => (
                 <button
@@ -338,13 +347,13 @@ export default function StylePage() {
                     border: `1px solid ${selectedOccasions.includes(occasion) ? '#8A9E8C' : '#E8B4BA'}`,
                   }}
                 >
-                  {occasion}
+                  {optionLabel('occasion', occasion)}
                 </button>
               ))}
             </div>
 
             <p className="text-sm font-medium mb-3" style={{ color: '#3D3535' }}>
-              Reference Images <span style={{ color: '#8C7B75' }}>(optional, up to 4)</span>
+              {t('style.referenceImages')} <span style={{ color: '#8C7B75' }}>{t('style.optionalUpTo4')}</span>
             </p>
             <div className="grid grid-cols-4 gap-3 mb-8">
               {refImageUrls.map((_, index) => (
@@ -369,12 +378,12 @@ export default function StylePage() {
                 ? (
                   <span className="flex items-center justify-center gap-2">
                     <span className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    {warmingUp || 'Searching catalog...'}
+                    {warmingUp || t('style.loadingCatalog')}
                   </span>
                 )
                 : !selectedGender
-                  ? 'Select a Gender to Continue'
-                  : 'Analyze My Style'}
+                  ? t('style.selectGender')
+                  : t('style.analyze')}
             </button>
           </motion.div>
         </div>
@@ -383,10 +392,10 @@ export default function StylePage() {
           <div className="flex items-center justify-between gap-4 mb-8">
             <div>
               <p className="text-xs uppercase tracking-[0.28em]" style={{ color: '#C97B84' }}>
-                Style Conversation
+                {t('style.styleConversation')}
               </p>
               <h1 className="mt-3 text-4xl font-serif" style={{ fontFamily: "'Playfair Display', serif", color: '#1A1A1A' }}>
-                Curate and refine in chat
+                {t('style.curateRefine')}
               </h1>
             </div>
             <button
@@ -395,7 +404,7 @@ export default function StylePage() {
               className="rounded-full px-5 py-2.5 text-sm border transition-colors"
               style={{ borderColor: '#E8B4BA', color: '#8C7B75', backgroundColor: '#FFFCF8' }}
             >
-              Back for new chat
+              {t('style.backForNewChat')}
             </button>
           </div>
 
@@ -416,6 +425,7 @@ export default function StylePage() {
                   onTryOn={handleTryOn}
                   onSave={saveLook}
                   canSave={Boolean(user)}
+                  t={t}
                 />
               </section>
             ))}
@@ -477,7 +487,7 @@ export default function StylePage() {
                     }
                   }}
                   rows={1}
-                  placeholder="Refine these results with a follow-up message..."
+                  placeholder={t('style.refinePlaceholder')}
                   className="flex-1 bg-transparent resize-none outline-none text-sm leading-6"
                   style={{ color: '#1A1A1A' }}
                 />
@@ -487,7 +497,7 @@ export default function StylePage() {
                   className="shrink-0 rounded-full px-5 py-2.5 text-white text-sm font-medium disabled:opacity-40 transition-all hover:scale-[1.01]"
                   style={{ backgroundColor: '#C97B84' }}
                 >
-                  Send
+                  {t('style.send')}
                 </button>
               </div>
             </div>
