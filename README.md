@@ -62,15 +62,6 @@ User message + optional reference style image
 -> recommendation results
 ```
 
-This project is divided across four roles:
-
-| Role | Responsibility |
-|------|---------------|
-| **Suyuan Wang** | LangChain / LangGraph agent, tool definitions, prompt engineering, conversation flow |
-| **Zihao Lin** | Product dataset (`cleaned_data.csv`), CLIP embeddings (`final_*_features.npy`), FAISS retrieval and filtering |
-| **Haozhen Zheng** | Virtual try-on integration (FASHN API), image preprocessing, tool implementation |
-| **Larry Liao** | React frontend, FastAPI bridge, image upload flow |
-
 ---
 
 ## Features
