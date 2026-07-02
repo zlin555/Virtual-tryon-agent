@@ -87,9 +87,14 @@ function RecommendationCard({ rec, onTryOn, onSave, canSave, t }) {
         <p className="font-serif text-sm mb-1 line-clamp-1" style={{ fontFamily: "'Playfair Display', serif", color: '#241F1F' }}>
           {rec.title}
         </p>
-        {(rec.metadata?.color || rec.metadata?.articleType || rec.metadata?.usage) && (
+        {(rec.metadata?.color || rec.metadata?.articleType || rec.metadata?.usage || rec.metadata?.price_usd) && (
           <p className="text-xs mb-3" style={{ color: '#8C7B75' }}>
-            {[rec.metadata?.color, rec.metadata?.articleType, rec.metadata?.usage].filter(Boolean).join(' · ')}
+            {[
+              rec.metadata?.color,
+              rec.metadata?.articleType,
+              rec.metadata?.usage,
+              rec.metadata?.price_usd ? `$${rec.metadata.price_usd}` : null,
+            ].filter(Boolean).join(' · ')}
           </p>
         )}
         <div className="flex gap-2">

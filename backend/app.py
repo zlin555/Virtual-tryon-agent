@@ -1,4 +1,9 @@
 """
+Legacy Gradio UI for local experiments.
+
+The deployed API entry point is backend.api_clip:app. Keep this module as a
+manual demo surface only; it is not used by the Vercel/Hugging Face flow.
+
 Virtual Try-On Agent — Gradio UI
 
 Run:

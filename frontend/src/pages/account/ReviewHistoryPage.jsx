@@ -22,9 +22,14 @@ function HistoryProductCard({ product, onTryOn, t }) {
         >
           {product.title}
         </p>
-        {(product.metadata?.color || product.metadata?.articleType || product.metadata?.usage) && (
+        {(product.metadata?.color || product.metadata?.articleType || product.metadata?.usage || product.metadata?.price_usd) && (
           <p className="mt-2 text-xs" style={{ color: '#8C7B75' }}>
-            {[product.metadata?.color, product.metadata?.articleType, product.metadata?.usage].filter(Boolean).join(' · ')}
+            {[
+              product.metadata?.color,
+              product.metadata?.articleType,
+              product.metadata?.usage,
+              product.metadata?.price_usd ? `$${product.metadata.price_usd}` : null,
+            ].filter(Boolean).join(' · ')}
           </p>
         )}
         <button
@@ -72,7 +77,7 @@ export default function ReviewHistoryPage() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     loadHistory()

@@ -197,7 +197,7 @@ Describe your personal style, select aesthetic chips such as Minimalist, Streetw
 
 The agent first extracts a structured style preference, then returns outfit cards with real product images from the fashion catalog. Click any card to jump to the Try-On page with that garment pre-filled.
 
-### Virtual Try-On (`/tryon`)
+### Virtual Try-On (`/try-on`)
 
 Upload or paste a URL for your photo and a garment image. Select the garment type and optionally add a style note, then click **Try On**. FASHN renders a photo-realistic result.
 
@@ -314,7 +314,7 @@ Virtual-tryon-agent/
 |-- backend/
 |   |-- api_clip.py           # FastAPI server
 |   |-- new_main_framework.py # Agent, summarize_preference, CLIP+FAISS retrieval, try-on services
-|   |-- app.py                # Legacy Gradio UI or experimental app entry
+|   |-- app.py                # Legacy Gradio UI; not the deployment entry point
 |   |-- auth.py               # Register/login, password hashing, JWT auth
 |   |-- database.py           # SQLAlchemy engine/session setup
 |   |-- models.py             # Database models

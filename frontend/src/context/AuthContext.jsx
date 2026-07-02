@@ -80,7 +80,6 @@ export function AuthProvider({ children }) {
   }, [persistToken])
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadMe()
   }, [loadMe])
 

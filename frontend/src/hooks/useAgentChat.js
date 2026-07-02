@@ -49,7 +49,7 @@ async function waitForAgent(onStatus, statusPrefix = 'AI model loading...') {
 function buildCopy(displayLanguage) {
   const zh = displayLanguage === 'zh'
   return {
-    loading: zh ? 'AI 模型加载中，首次启动大约需要一分钟' : 'AI model loading... this takes about a minute on first run',
+    loading: zh ? 'AI 模型正在加载，首次启动大约需要一分钟' : 'AI model loading... this takes about a minute on first run',
     timeout: zh ? '模型启动时间过长，请刷新后再试。' : 'Agent took too long to load. Please refresh and try again.',
     updating: zh ? '暂时无法更新推荐结果。' : 'Unable to update recommendations right now.',
     network: zh ? '网络请求失败。' : 'Network error.',
@@ -92,7 +92,7 @@ export default function useAgentChat() {
     ]))
 
     try {
-        const { data } = await api.post('/agent/chat', {
+      const { data } = await api.post('/agent/chat', {
         message,
         history: plainHistory.slice(-6),
         session_id: getStyleSessionId(),

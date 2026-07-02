@@ -430,6 +430,7 @@ class ProductRetrievalService(ImageSearchService):
                         "articleType": row.get("articleType", ""),
                         "color": row.get("baseColour", ""),
                         "usage": row.get("usage", ""),
+                        "price_usd": row.get("price_usd", ""),
                         "score": float(score),
                     },
                 )
@@ -457,6 +458,7 @@ class ProductRetrievalService(ImageSearchService):
                 "color": row.get("baseColour", ""),
                 "usage": row.get("usage", ""),
                 "gender": row.get("gender", ""),
+                "price_usd": row.get("price_usd", ""),
             },
         )
 
@@ -485,6 +487,7 @@ class ProductRetrievalService(ImageSearchService):
                 "color": row.get("baseColour", ""),
                 "usage": row.get("usage", ""),
                 "gender": row.get("gender", ""),
+                "price_usd": row.get("price_usd", ""),
             },
         )
 
