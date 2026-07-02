@@ -1087,6 +1087,17 @@ async def upload_image(file: UploadFile = File(...)) -> UploadResponse:
     return UploadResponse(image_url=image_url)
 
 
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "service": "Virtual Try-On Agent API",
+        "docs": "/docs",
+        "health": "/api/health",
+        "ready": "/api/ready",
+    }
+
+
 @app.get("/api/health")
 def health():
     return {
