@@ -170,6 +170,9 @@ Set these in **Hugging Face Space Settings - > Variables**.
 | `HF_FEATURES_REPO_ID` | `your-username/your-features-dataset` | Optional fallback repo containing `final_image_features.npy` and `final_text_features.npy` |
 | `HF_FEATURES_REPO_TYPE` | `dataset` | Repo type for feature downloads; defaults to `dataset` |
 | `HF_FEATURES_REVISION` | `main` | Optional revision for feature downloads |
+| `PRODUCT_RETRIEVAL_SOURCE` | `files` or `sql` | Use local/HF `.npy` feature files or load product embeddings from Aiven SQL |
+| `FASHION_PRODUCTS_TABLE` | `fashion_products` | SQL table created by the Colab embedding upload script |
+| `FASHION_PRODUCTS_SQL_LIMIT` | empty or a number | Optional startup cap while testing a large SQL-backed catalog |
 
 ### CLIP Feature Files
 
@@ -496,6 +499,15 @@ JWT_SECRET_KEY=use-a-long-random-secret
 ```
 
 The backend creates the `users` table automatically at startup. Do not store plain text passwords; the backend stores only bcrypt password hashes.
+
+To use the expanded Aiven product catalog generated from Colab, also set:
+
+```text
+PRODUCT_RETRIEVAL_SOURCE=sql
+FASHION_PRODUCTS_TABLE=fashion_products
+```
+
+Leave `PRODUCT_RETRIEVAL_SOURCE` unset or set it to `files` if you want the older `cleaned_data.csv` plus `.npy` retrieval path.
 
 ---
 

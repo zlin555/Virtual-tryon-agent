@@ -47,6 +47,7 @@ import numpy as np
 import torch
 from transformers import CLIPProcessor, CLIPModel
 import faiss
+from sqlalchemy import create_engine, text as sql_text
 
 # Load .env if present (pip install python-dotenv)
 try:
@@ -220,14 +221,31 @@ def _resolve_feature_file(local_path: str) -> str:
     )
         
 class ProductRetrievalService(ImageSearchService):
-    def __init__(self, products_csv, text_features_path, image_features_path):
-        self.df = pd.read_csv(products_csv)
+    def __init__(
+        self,
+        products_csv=None,
+        text_features_path=None,
+        image_features_path=None,
+        *,
+        df: Optional[pd.DataFrame] = None,
+        text_features: Optional[np.ndarray] = None,
+        image_features: Optional[np.ndarray] = None,
+        source_name: str = "kaggle_fashion_dataset",
+    ):
+        if df is None:
+            self.df = pd.read_csv(products_csv)
 
-        text_features_path = _resolve_feature_file(text_features_path)
-        image_features_path = _resolve_feature_file(image_features_path)
+            text_features_path = _resolve_feature_file(text_features_path)
+            image_features_path = _resolve_feature_file(image_features_path)
 
-        self.text_features = np.load(text_features_path).astype("float32")
-        self.image_features = np.load(image_features_path).astype("float32")
+            self.text_features = np.load(text_features_path).astype("float32")
+            self.image_features = np.load(image_features_path).astype("float32")
+        else:
+            self.df = df.reset_index(drop=True)
+            self.text_features = text_features.astype("float32") if text_features is not None else None
+            self.image_features = image_features.astype("float32")
+
+        self.source_name = source_name
 
         # Normalize image features once for cosine similarity / inner product search
         faiss.normalize_L2(self.image_features)
@@ -240,6 +258,78 @@ class ProductRetrievalService(ImageSearchService):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", use_safetensors=True).to(self.device)
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    @classmethod
+    def from_sql(
+        cls,
+        database_url: str,
+        *,
+        table_name: str = "fashion_products",
+        limit: Optional[int] = None,
+    ) -> "ProductRetrievalService":
+        if not database_url:
+            raise ValueError("DATABASE_URL is required when PRODUCT_RETRIEVAL_SOURCE=sql.")
+        if not re.match(r"^[A-Za-z0-9_]+$", table_name):
+            raise ValueError("FASHION_PRODUCTS_TABLE can only contain letters, numbers, and underscores.")
+
+        engine = create_engine(
+            database_url,
+            pool_pre_ping=True,
+            connect_args={"ssl": {}} if database_url.startswith("mysql") else {},
+        )
+
+        limit_clause = f" LIMIT {int(limit)}" if limit else ""
+        query = sql_text(f"""
+            SELECT
+                catalog_product_id AS id,
+                source_dataset,
+                gender,
+                masterCategory,
+                subCategory,
+                articleType,
+                baseColour,
+                season,
+                year,
+                usage_text AS `usage`,
+                productDisplayName,
+                link,
+                text_description AS `text`,
+                price_usd,
+                image_embedding_blob,
+                text_embedding_blob
+            FROM {table_name}
+            WHERE image_embedding_blob IS NOT NULL
+              AND link IS NOT NULL
+              AND link != ''
+            ORDER BY id ASC
+            {limit_clause}
+        """)
+
+        with engine.connect() as conn:
+            rows = conn.execute(query).mappings().all()
+
+        if not rows:
+            raise RuntimeError(f"No retrievable product rows found in SQL table {table_name}.")
+
+        records = []
+        image_features = []
+        text_features = []
+        for row in rows:
+            row_dict = dict(row)
+            image_blob = row_dict.pop("image_embedding_blob")
+            text_blob = row_dict.pop("text_embedding_blob", None)
+            image_features.append(np.frombuffer(image_blob, dtype=np.float32))
+            if text_blob:
+                text_features.append(np.frombuffer(text_blob, dtype=np.float32))
+            records.append(row_dict)
+
+        source_label = f"sql_{table_name}"
+        return cls(
+            df=pd.DataFrame(records),
+            image_features=np.vstack(image_features).astype("float32"),
+            text_features=np.vstack(text_features).astype("float32") if text_features else None,
+            source_name=source_label,
+        )
 
     def _extract_gender_from_query(self, query: str) -> Optional[str]:
         """
@@ -422,7 +512,7 @@ class ProductRetrievalService(ImageSearchService):
                     image_id=str(row["id"]),
                     title=str(row["productDisplayName"]),
                     image_url=str(row["link"]),
-                    source="kaggle_fashion_dataset_faiss",
+                    source=f"{self.source_name}_faiss",
                     metadata={
                         "gender_filter_from_query": gender_filter,
                         "dataset_gender": row.get("gender", ""),
@@ -451,7 +541,7 @@ class ProductRetrievalService(ImageSearchService):
             image_id=str(row["id"]),
             title=str(row["productDisplayName"]),
             image_url=str(row["link"]),
-            source="kaggle_fashion_dataset_exact_id",
+            source=f"{self.source_name}_exact_id",
             metadata={
                 "category": row.get("subCategory", ""),
                 "articleType": row.get("articleType", ""),
@@ -480,7 +570,7 @@ class ProductRetrievalService(ImageSearchService):
             image_id=str(row["id"]),
             title=str(row["productDisplayName"]),
             image_url=str(row["link"]),
-            source="kaggle_fashion_dataset_exact_name",
+            source=f"{self.source_name}_exact_name",
             metadata={
                 "category": row.get("subCategory", ""),
                 "articleType": row.get("articleType", ""),
@@ -998,12 +1088,25 @@ def _resolve_tryon_service() -> VirtualTryOnService:
 
 
 def build_app_agent() -> VirtualTryOnOrchestrator:
-    deps = AgentDependencies(
-        image_search_service=ProductRetrievalService(
+    retrieval_source = os.getenv("PRODUCT_RETRIEVAL_SOURCE", "files").strip().lower()
+
+    if retrieval_source == "sql":
+        sql_limit_raw = os.getenv("FASHION_PRODUCTS_SQL_LIMIT", "").strip()
+        sql_limit = int(sql_limit_raw) if sql_limit_raw else None
+        image_search_service = ProductRetrievalService.from_sql(
+            os.getenv("DATABASE_URL", ""),
+            table_name=os.getenv("FASHION_PRODUCTS_TABLE", "fashion_products"),
+            limit=sql_limit,
+        )
+    else:
+        image_search_service = ProductRetrievalService(
             products_csv="./cleaned_data.csv",
             text_features_path="./final_text_features.npy",
             image_features_path="./final_image_features.npy",
-        ),
+        )
+
+    deps = AgentDependencies(
+        image_search_service=image_search_service,
         tryon_service=_resolve_tryon_service(),
     )
 
