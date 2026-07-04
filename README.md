@@ -170,9 +170,7 @@ Set these in **Hugging Face Space Settings - > Variables**.
 | `HF_FEATURES_REPO_ID` | `your-username/your-features-dataset` | Optional fallback repo containing `final_image_features.npy` and `final_text_features.npy` |
 | `HF_FEATURES_REPO_TYPE` | `dataset` | Repo type for feature downloads; defaults to `dataset` |
 | `HF_FEATURES_REVISION` | `main` | Optional revision for feature downloads |
-| `PRODUCT_RETRIEVAL_SOURCE` | `files` or `sql` | Use local/HF `.npy` feature files or load product embeddings from Aiven SQL |
-| `FASHION_PRODUCTS_TABLE` | `fashion_products` | SQL table created by the Colab embedding upload script |
-| `FASHION_PRODUCTS_SQL_LIMIT` | empty or a number | Optional startup cap while testing a large SQL-backed catalog |
+| `FASHION_PRODUCTS_TABLE` | `fashion_product_manifest` | Optional lightweight Aiven manifest table created by the Colab pipeline |
 
 ### CLIP Feature Files
 
@@ -498,16 +496,9 @@ DATABASE_URL=mysql+pymysql://avnadmin:YOUR_PASSWORD@YOUR_HOST:YOUR_PORT/defaultd
 JWT_SECRET_KEY=use-a-long-random-secret
 ```
 
-The backend creates the `users` table automatically at startup. Do not store plain text passwords; the backend stores only bcrypt password hashes.
+The backend creates the user/auth tables automatically at startup. Do not store plain text passwords; the backend stores only bcrypt password hashes.
 
-To use the expanded Aiven product catalog generated from Colab, also set:
-
-```text
-PRODUCT_RETRIEVAL_SOURCE=sql
-FASHION_PRODUCTS_TABLE=fashion_products
-```
-
-Leave `PRODUCT_RETRIEVAL_SOURCE` unset or set it to `files` if you want the older `cleaned_data.csv` plus `.npy` retrieval path.
+Product retrieval still loads `cleaned_data.csv`, `final_image_features.npy`, and `final_text_features.npy` as files. For a 1 GB Aiven service, keep large `.npy` embeddings in the Hugging Face Space or a Hugging Face Dataset repo, and use Aiven only for user data plus the optional lightweight `fashion_product_manifest` table generated from Colab. Do not store image bytes or per-row embedding blobs in Aiven.
 
 ---
 

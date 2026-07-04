@@ -1,36 +1,44 @@
 """
-Merge fashion product datasets, compute CLIP embeddings on Colab, and upload to Aiven MySQL.
+Merge fashion datasets, compute CLIP embeddings on Colab, and publish a compact catalog.
 
-This script is designed for your current retrieval architecture:
-- Keep public image URLs in `link`; do not upload images unless a source lacks URLs.
-- Use Colab GPU only to temporarily download images for CLIP embedding.
-- Store product metadata plus image/text embeddings in Aiven.
-- Let the backend build FAISS in memory from the SQL rows at startup.
+Storage model:
+- Colab temporarily downloads images from public URLs only for CLIP encoding.
+- Large retrieval assets stay as files:
+  - cleaned_data.csv
+  - final_image_features.npy
+  - final_text_features.npy
+- Aiven stores only lightweight product metadata and asset version pointers.
+  It does not store image bytes or embedding blobs.
 
 Colab install cell:
-    !pip -q install transformers datasets huggingface_hub pillow requests tqdm pandas numpy sqlalchemy pymysql safetensors
+    !pip -q install transformers huggingface_hub pillow requests tqdm pandas numpy sqlalchemy pymysql safetensors
 
-Sensitive credentials:
-    Set DATABASE_URL in Colab Secrets or paste it when prompted.
-    Format: mysql+pymysql://USER:PASSWORD@HOST:PORT/defaultdb
+Optional Colab inputs:
+    /content/cleaned_data.csv
+    /content/fashion_product_image_text.csv
+    /content/deepfashion_manifest.csv
+    /content/amazon_meta_Clothing_Shoes_and_Jewelry.jsonl.gz
+
+Amazon Reviews 2023 note:
+    Hugging Face dataset scripts may fail with "Dataset scripts are no longer supported".
+    Use an official downloaded metadata JSONL/JSONL.GZ/CSV file or set AMAZON_METADATA_URL.
 """
 
 from __future__ import annotations
 
+import gzip
 import getpass
 import json
 import math
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 
 import numpy as np
 import pandas as pd
 import requests
 import torch
-from datasets import load_dataset
 from PIL import Image, ImageFile
 from sqlalchemy import create_engine, text
 from tqdm.auto import tqdm
@@ -41,38 +49,40 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # -------------------------
 # Configuration
 # -------------------------
-OUTPUT_DIR = Path("/content/clip_fashion_sql_export")
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/content/clip_fashion_export"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
-TEXT_BATCH_SIZE = 256
-IMAGE_BATCH_SIZE = 128
-DOWNLOAD_WORKERS = 32
-REQUEST_TIMEOUT = 12
-MAX_ROWS_TOTAL: Optional[int] = None
+CLIP_MODEL_ID = os.getenv("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
+TEXT_BATCH_SIZE = int(os.getenv("TEXT_BATCH_SIZE", "256"))
+IMAGE_BATCH_SIZE = int(os.getenv("IMAGE_BATCH_SIZE", "128"))
+DOWNLOAD_WORKERS = int(os.getenv("DOWNLOAD_WORKERS", "32"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "12"))
 
-# Original project data. Prefer an uploaded /content/cleaned_data.csv if present.
-ORIGINAL_CLEANED_CSV_PATH = "/content/cleaned_data.csv"
-ORIGINAL_CLEANED_CSV_URL = "https://raw.githubusercontent.com/zlin555/Virtual-tryon-agent/main/cleaned_data.csv"
+MAX_ROWS_TOTAL = int(os.getenv("MAX_ROWS_TOTAL", "0")) or None
+MAX_AMAZON_ROWS = int(os.getenv("MAX_AMAZON_ROWS", "60000"))
+MAX_KAGGLE_ROWS = int(os.getenv("MAX_KAGGLE_ROWS", "0")) or None
+MAX_DEEPFASHION_ROWS = int(os.getenv("MAX_DEEPFASHION_ROWS", "0")) or None
 
-# Optional supplement sources. Turn these on/off depending on what you want to run.
-USE_AMAZON_2023 = True
-AMAZON_CONFIG = "raw_meta_Clothing_Shoes_and_Jewelry"
-MAX_AMAZON_ROWS = 60000
+ORIGINAL_CLEANED_CSV_PATH = os.getenv("ORIGINAL_CLEANED_CSV_PATH", "/content/cleaned_data.csv")
+ORIGINAL_CLEANED_CSV_URL = os.getenv(
+    "ORIGINAL_CLEANED_CSV_URL",
+    "https://raw.githubusercontent.com/zlin555/Virtual-tryon-agent/main/cleaned_data.csv",
+)
 
-USE_KAGGLE_CSV = True
-KAGGLE_PRODUCT_TEXT_CSV = "/content/fashion_product_image_text.csv"
-MAX_KAGGLE_ROWS: Optional[int] = None
+KAGGLE_PRODUCT_TEXT_CSV = os.getenv("KAGGLE_PRODUCT_TEXT_CSV", "/content/fashion_product_image_text.csv")
+DEEPFASHION_MANIFEST_CSV = os.getenv("DEEPFASHION_MANIFEST_CSV", "/content/deepfashion_manifest.csv")
+AMAZON_METADATA_PATH = os.getenv(
+    "AMAZON_METADATA_PATH",
+    "/content/amazon_meta_Clothing_Shoes_and_Jewelry.jsonl.gz",
+)
+AMAZON_METADATA_URL = os.getenv("AMAZON_METADATA_URL", "").strip()
 
-# DeepFashion/DeepFashion2 official releases usually do not provide stable public product URLs.
-# Use a manifest CSV you prepare/upload with at least one image URL column:
-# image_url/link/url, plus optional title/category/gender/color/price columns.
-USE_DEEPFASHION_MANIFEST = True
-DEEPFASHION_MANIFEST_CSV = "/content/deepfashion_manifest.csv"
-MAX_DEEPFASHION_ROWS: Optional[int] = None
+UPLOAD_AIVEN_MANIFEST = os.getenv("UPLOAD_AIVEN_MANIFEST", "1") == "1"
+MYSQL_TABLE = os.getenv("FASHION_PRODUCTS_TABLE", "fashion_product_manifest")
+SOURCE_RUN_NAME = os.getenv("SOURCE_RUN_NAME", "colab_static_merge_v2")
 
-MYSQL_TABLE = "fashion_products"
-SOURCE_RUN_NAME = "colab_static_merge_v1"
+HF_OUTPUT_REPO_ID = os.getenv("HF_OUTPUT_REPO_ID", "").strip()
+HF_OUTPUT_REPO_TYPE = os.getenv("HF_OUTPUT_REPO_TYPE", "dataset")
 
 CATEGORY_MAP = {
     "apparel set": "apparel",
@@ -134,7 +144,7 @@ COLUMN_ALIASES = {
     "year": ["year"],
     "usage": ["usage", "occasion", "style", "aesthetic"],
     "productDisplayName": ["productDisplayName", "product_name", "name", "title", "description", "caption"],
-    "link": ["link", "image_url", "imageUrl", "url", "img_url", "image_link"],
+    "link": ["link", "image_url", "imageUrl", "url", "img_url", "image_link", "main_image"],
     "price_usd": ["price_usd", "price", "retail_price", "sale_price"],
 }
 
@@ -252,22 +262,58 @@ def extract_amazon_image_url(images_value) -> str:
     return ""
 
 
-def load_amazon() -> pd.DataFrame:
-    ds = load_dataset(
-        "McAuley-Lab/Amazon-Reviews-2023",
-        AMAZON_CONFIG,
-        split="full",
-        trust_remote_code=True,
-    )
-    if MAX_AMAZON_ROWS is not None:
-        ds = ds.select(range(min(MAX_AMAZON_ROWS, len(ds))))
-    df = ds.to_pandas()
-    if "images" in df.columns:
-        df["link"] = df["images"].apply(extract_amazon_image_url)
-    if "categories" in df.columns:
-        df["subCategory"] = df["categories"].apply(lambda value: scalar(value).split(" > ")[-1])
-        df["usage"] = df["categories"].apply(scalar)
-    return normalize_generic(df, f"amazon_2023_{AMAZON_CONFIG}", "amazon")
+def iter_jsonl(path: Path) -> Iterator[dict]:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def maybe_download(url: str, output_path: Path) -> Optional[Path]:
+    if not url:
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(url, stream=True, timeout=REQUEST_TIMEOUT) as response:
+        response.raise_for_status()
+        with output_path.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+    return output_path
+
+
+def load_amazon_metadata() -> pd.DataFrame:
+    path = Path(AMAZON_METADATA_PATH)
+    if not path.exists() and AMAZON_METADATA_URL:
+        print("Downloading Amazon metadata file...")
+        path = maybe_download(AMAZON_METADATA_URL, path) or path
+    if not path.exists():
+        print("Skipping Amazon metadata: set AMAZON_METADATA_PATH or AMAZON_METADATA_URL.")
+        return pd.DataFrame(columns=BACKEND_COLUMNS)
+
+    if path.suffix.lower() == ".csv":
+        df = pd.read_csv(path, on_bad_lines="skip")
+        if MAX_AMAZON_ROWS:
+            df = df.head(MAX_AMAZON_ROWS)
+    else:
+        rows = []
+        for item in tqdm(iter_jsonl(path), total=MAX_AMAZON_ROWS, desc="Reading Amazon metadata"):
+            item["link"] = extract_amazon_image_url(item.get("images"))
+            if item.get("categories"):
+                item["subCategory"] = scalar(item.get("categories")).split(" > ")[-1]
+                item["usage"] = scalar(item.get("categories"))
+            rows.append(item)
+            if MAX_AMAZON_ROWS and len(rows) >= MAX_AMAZON_ROWS:
+                break
+        df = pd.DataFrame(rows)
+
+    return normalize_generic(df, "amazon_reviews_2023_metadata", "amazon")
 
 
 def load_optional_csv(path: str, source_dataset: str, id_prefix: str, max_rows: Optional[int]) -> pd.DataFrame:
@@ -281,14 +327,12 @@ def load_optional_csv(path: str, source_dataset: str, id_prefix: str, max_rows: 
 
 
 def load_all_sources() -> pd.DataFrame:
-    frames = [load_original()]
-    if USE_AMAZON_2023:
-        frames.append(load_amazon())
-    if USE_KAGGLE_CSV:
-        frames.append(load_optional_csv(KAGGLE_PRODUCT_TEXT_CSV, "kaggle_fashion_product_image_text", "kaggle", MAX_KAGGLE_ROWS))
-    if USE_DEEPFASHION_MANIFEST:
-        frames.append(load_optional_csv(DEEPFASHION_MANIFEST_CSV, "deepfashion_manifest", "deepfashion", MAX_DEEPFASHION_ROWS))
-
+    frames = [
+        load_original(),
+        load_amazon_metadata(),
+        load_optional_csv(KAGGLE_PRODUCT_TEXT_CSV, "kaggle_fashion_product_image_text", "kaggle", MAX_KAGGLE_ROWS),
+        load_optional_csv(DEEPFASHION_MANIFEST_CSV, "deepfashion_manifest", "deepfashion", MAX_DEEPFASHION_ROWS),
+    ]
     merged = pd.concat(frames, ignore_index=True)
     merged = merged[merged["link"].apply(is_public_url)].copy()
     merged = merged.drop_duplicates(subset=["link"], keep="first")
@@ -322,8 +366,7 @@ def encode_texts(model: CLIPModel, processor: CLIPProcessor, texts: list[str], d
     for start in tqdm(range(0, len(texts), TEXT_BATCH_SIZE), desc="Encoding texts"):
         batch = texts[start : start + TEXT_BATCH_SIZE]
         inputs = processor(text=batch, return_tensors="pt", padding=True, truncation=True).to(device)
-        outputs = model.text_model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"])
-        feats = model.text_projection(outputs.pooler_output)
+        feats = model.get_text_features(**inputs)
         feats = feats / feats.norm(dim=-1, keepdim=True)
         chunks.append(feats.cpu().numpy().astype("float32"))
     return np.vstack(chunks)
@@ -342,7 +385,6 @@ def encode_images_from_urls(
     for start in tqdm(range(0, len(df), IMAGE_BATCH_SIZE), desc="Image batches"):
         batch_df = df.iloc[start : start + IMAGE_BATCH_SIZE].copy()
         loaded: list[tuple[int, Image.Image]] = []
-        failed = []
 
         with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
             futures = {
@@ -352,9 +394,7 @@ def encode_images_from_urls(
             for future in as_completed(futures):
                 idx = futures[future]
                 image = future.result()
-                if image is None:
-                    failed.append(idx)
-                else:
+                if image is not None:
                     loaded.append((idx, image))
 
         if not loaded:
@@ -375,20 +415,19 @@ def encode_images_from_urls(
     return pd.concat(kept_rows, ignore_index=True), np.vstack(feature_chunks)
 
 
-def vector_to_blob(vector: np.ndarray) -> bytes:
-    return np.asarray(vector, dtype="float32").tobytes()
-
-
 def get_database_url() -> str:
     database_url = os.getenv("DATABASE_URL", "").strip()
     if not database_url:
-        database_url = getpass.getpass("Paste Aiven DATABASE_URL (input hidden): ").strip()
+        database_url = getpass.getpass("Paste Aiven DATABASE_URL for metadata manifest (input hidden): ").strip()
     if not database_url:
-        raise ValueError("DATABASE_URL is required.")
+        raise ValueError("DATABASE_URL is required when UPLOAD_AIVEN_MANIFEST=1.")
     return database_url
 
 
-def create_tables(engine) -> None:
+def create_manifest_table(engine) -> None:
+    if not MYSQL_TABLE.replace("_", "").isalnum():
+        raise ValueError("FASHION_PRODUCTS_TABLE can only contain letters, numbers, and underscores.")
+
     ddl = f"""
     CREATE TABLE IF NOT EXISTS {MYSQL_TABLE} (
         id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -406,10 +445,10 @@ def create_tables(engine) -> None:
         link TEXT NOT NULL,
         text_description TEXT,
         price_usd VARCHAR(64),
-        embedding_dim INT NOT NULL DEFAULT 512,
-        image_embedding_blob LONGBLOB NOT NULL,
-        text_embedding_blob LONGBLOB NOT NULL,
-        metadata_json JSON NULL,
+        row_index INT NOT NULL,
+        image_features_file VARCHAR(255) NOT NULL,
+        text_features_file VARCHAR(255) NOT NULL,
+        catalog_file VARCHAR(255) NOT NULL,
         source_run VARCHAR(128),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -423,24 +462,28 @@ def create_tables(engine) -> None:
         conn.execute(text(ddl))
 
 
-def upload_to_mysql(df: pd.DataFrame, image_features: np.ndarray, text_features: np.ndarray) -> None:
+def upload_manifest_to_mysql(df: pd.DataFrame) -> None:
+    if not UPLOAD_AIVEN_MANIFEST:
+        print("Skipping Aiven manifest upload because UPLOAD_AIVEN_MANIFEST != 1.")
+        return
+
     database_url = get_database_url()
     engine = create_engine(database_url, pool_pre_ping=True, connect_args={"ssl": {}})
-    create_tables(engine)
+    create_manifest_table(engine)
 
     sql = text(
         f"""
         INSERT INTO {MYSQL_TABLE} (
             catalog_product_id, source_dataset, gender, masterCategory, subCategory,
             articleType, baseColour, season, year, usage_text, productDisplayName,
-            link, text_description, price_usd, embedding_dim, image_embedding_blob,
-            text_embedding_blob, metadata_json, source_run
+            link, text_description, price_usd, row_index, image_features_file,
+            text_features_file, catalog_file, source_run
         )
         VALUES (
             :catalog_product_id, :source_dataset, :gender, :masterCategory, :subCategory,
             :articleType, :baseColour, :season, :year, :usage_text, :productDisplayName,
-            :link, :text_description, :price_usd, :embedding_dim, :image_embedding_blob,
-            :text_embedding_blob, :metadata_json, :source_run
+            :link, :text_description, :price_usd, :row_index, :image_features_file,
+            :text_features_file, :catalog_file, :source_run
         )
         ON DUPLICATE KEY UPDATE
             source_dataset = VALUES(source_dataset),
@@ -456,21 +499,21 @@ def upload_to_mysql(df: pd.DataFrame, image_features: np.ndarray, text_features:
             link = VALUES(link),
             text_description = VALUES(text_description),
             price_usd = VALUES(price_usd),
-            embedding_dim = VALUES(embedding_dim),
-            image_embedding_blob = VALUES(image_embedding_blob),
-            text_embedding_blob = VALUES(text_embedding_blob),
-            metadata_json = VALUES(metadata_json),
+            row_index = VALUES(row_index),
+            image_features_file = VALUES(image_features_file),
+            text_features_file = VALUES(text_features_file),
+            catalog_file = VALUES(catalog_file),
             source_run = VALUES(source_run)
         """
     )
 
-    batch_size = 500
+    batch_size = 1000
     records = []
     for i, row in df.iterrows():
         records.append(
             {
                 "catalog_product_id": str(row["id"]),
-                "source_dataset": str(row["source_dataset"]),
+                "source_dataset": scalar(row["source_dataset"]),
                 "gender": scalar(row["gender"]),
                 "masterCategory": scalar(row["masterCategory"]),
                 "subCategory": scalar(row["subCategory"]),
@@ -483,23 +526,44 @@ def upload_to_mysql(df: pd.DataFrame, image_features: np.ndarray, text_features:
                 "link": scalar(row["link"]),
                 "text_description": scalar(row["text"]),
                 "price_usd": scalar(row["price_usd"]),
-                "embedding_dim": int(image_features.shape[1]),
-                "image_embedding_blob": vector_to_blob(image_features[i]),
-                "text_embedding_blob": vector_to_blob(text_features[i]),
-                "metadata_json": json.dumps({"source_run": SOURCE_RUN_NAME}, ensure_ascii=False),
+                "row_index": int(i),
+                "image_features_file": "final_image_features.npy",
+                "text_features_file": "final_text_features.npy",
+                "catalog_file": "cleaned_data.csv",
                 "source_run": SOURCE_RUN_NAME,
             }
         )
         if len(records) >= batch_size:
             with engine.begin() as conn:
                 conn.execute(sql, records)
-            print("Uploaded rows:", i + 1)
+            print("Uploaded manifest rows:", i + 1)
             records = []
 
     if records:
         with engine.begin() as conn:
             conn.execute(sql, records)
-    print("Aiven upload complete:", len(df), "rows")
+    print("Aiven manifest upload complete:", len(df), "rows")
+
+
+def upload_files_to_hf() -> None:
+    if not HF_OUTPUT_REPO_ID:
+        print("Skipping Hugging Face upload because HF_OUTPUT_REPO_ID is not set.")
+        return
+
+    from huggingface_hub import HfApi, create_repo, get_token, notebook_login
+
+    if not get_token():
+        notebook_login()
+    create_repo(HF_OUTPUT_REPO_ID, repo_type=HF_OUTPUT_REPO_TYPE, exist_ok=True)
+    api = HfApi(token=get_token())
+    for filename in ["cleaned_data.csv", "final_image_features.npy", "final_text_features.npy"]:
+        api.upload_file(
+            path_or_fileobj=str(OUTPUT_DIR / filename),
+            path_in_repo=filename,
+            repo_id=HF_OUTPUT_REPO_ID,
+            repo_type=HF_OUTPUT_REPO_TYPE,
+        )
+        print("Uploaded to HF:", filename)
 
 
 def main() -> None:
@@ -514,14 +578,16 @@ def main() -> None:
     df, image_features = encode_images_from_urls(model, processor, df, device)
     text_features = encode_texts(model, processor, df["text"].tolist(), device)
 
-    df.to_csv(OUTPUT_DIR / "cleaned_data_merged.csv", index=False)
-    np.save(OUTPUT_DIR / "final_image_features_merged.npy", image_features)
-    np.save(OUTPUT_DIR / "final_text_features_merged.npy", text_features)
+    df.to_csv(OUTPUT_DIR / "cleaned_data.csv", index=False)
+    np.save(OUTPUT_DIR / "final_image_features.npy", image_features)
+    np.save(OUTPUT_DIR / "final_text_features.npy", text_features)
     print("Final merged rows:", len(df))
     print("Image features:", image_features.shape)
     print("Text features:", text_features.shape)
+    print("Output dir:", OUTPUT_DIR)
 
-    upload_to_mysql(df, image_features, text_features)
+    upload_manifest_to_mysql(df)
+    upload_files_to_hf()
 
 
 if __name__ == "__main__":
