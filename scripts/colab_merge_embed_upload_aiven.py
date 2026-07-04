@@ -275,29 +275,49 @@ def iter_jsonl(path: Path) -> Iterator[dict]:
                 continue
 
 
-def maybe_download(url: str, output_path: Path) -> Optional[Path]:
-    if not url:
-        return None
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def iter_remote_jsonl(url: str) -> Iterator[dict]:
     with requests.get(url, stream=True, timeout=REQUEST_TIMEOUT) as response:
         response.raise_for_status()
-        with output_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-    return output_path
+        raw = response.raw
+        raw.decode_content = True
+        if url.endswith(".gz"):
+            handle = gzip.GzipFile(fileobj=raw)
+            for raw_line in handle:
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        else:
+            for raw_line in response.iter_lines(decode_unicode=True):
+                line = str(raw_line or "").strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
 
 def load_amazon_metadata() -> pd.DataFrame:
     path = Path(AMAZON_METADATA_PATH)
-    if not path.exists() and AMAZON_METADATA_URL:
-        print("Downloading Amazon metadata file...")
-        path = maybe_download(AMAZON_METADATA_URL, path) or path
     if not path.exists():
-        print("Skipping Amazon metadata: set AMAZON_METADATA_PATH or AMAZON_METADATA_URL.")
-        return pd.DataFrame(columns=BACKEND_COLUMNS)
-
-    if path.suffix.lower() == ".csv":
+        if not AMAZON_METADATA_URL:
+            print("Skipping Amazon metadata: set AMAZON_METADATA_PATH or AMAZON_METADATA_URL.")
+            return pd.DataFrame(columns=BACKEND_COLUMNS)
+        rows = []
+        for item in tqdm(iter_remote_jsonl(AMAZON_METADATA_URL), total=MAX_AMAZON_ROWS, desc="Streaming Amazon metadata"):
+            item["link"] = extract_amazon_image_url(item.get("images"))
+            if item.get("categories"):
+                item["subCategory"] = scalar(item.get("categories")).split(" > ")[-1]
+                item["usage"] = scalar(item.get("categories"))
+            rows.append(item)
+            if MAX_AMAZON_ROWS and len(rows) >= MAX_AMAZON_ROWS:
+                break
+        df = pd.DataFrame(rows)
+    elif path.suffix.lower() == ".csv":
         df = pd.read_csv(path, on_bad_lines="skip")
         if MAX_AMAZON_ROWS:
             df = df.head(MAX_AMAZON_ROWS)
