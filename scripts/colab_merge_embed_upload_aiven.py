@@ -441,6 +441,9 @@ def get_database_url() -> str:
         database_url = getpass.getpass("Paste Aiven DATABASE_URL for metadata manifest (input hidden): ").strip()
     if not database_url:
         raise ValueError("DATABASE_URL is required when UPLOAD_AIVEN_MANIFEST=1.")
+    if database_url.startswith("mysql://"):
+        database_url = "mysql+pymysql://" + database_url[len("mysql://") :]
+    database_url = database_url.replace("?ssl-mode=REQUIRED", "").replace("&ssl-mode=REQUIRED", "")
     return database_url
 
 
