@@ -167,7 +167,7 @@ Set these in **Hugging Face Space Settings - > Variables**.
 | Variable | Recommended value | Purpose |
 |---|---|---|
 | `ALLOWED_ORIGINS` | `https://your-frontend-domain.com,http://localhost:5173` | Allows the deployed frontend to call the backend |
-| `HF_FEATURES_REPO_ID` | `your-username/your-features-dataset` | Optional fallback repo containing `final_image_features.npy` and `final_text_features.npy` |
+| `HF_FEATURES_REPO_ID` | `your-username/your-features-dataset` | Optional fallback repo containing `cleaned_data.csv`, `final_image_features.npy`, and `final_text_features.npy` |
 | `HF_FEATURES_REPO_TYPE` | `dataset` | Repo type for feature downloads; defaults to `dataset` |
 | `HF_FEATURES_REVISION` | `main` | Optional revision for feature downloads |
 | `FASHION_PRODUCTS_TABLE` | `fashion_product_manifest` | Optional lightweight Aiven manifest table created by the Colab pipeline |
@@ -184,7 +184,7 @@ final_text_features.npy
 You can provide them in either of two ways:
 
 1. Upload both `.npy` files directly to the Hugging Face Space repository, preferably with Git LFS.
-2. Upload both files to a Hugging Face Dataset or Model repo and set `HF_FEATURES_REPO_ID`. If the files are missing locally, `backend/new_main_framework.py` will download them with `huggingface_hub`.
+2. Upload `cleaned_data.csv` and both `.npy` files to a Hugging Face Dataset or Model repo and set `HF_FEATURES_REPO_ID`. If these files are missing locally, `backend/new_main_framework.py` will download the matched set with `huggingface_hub`.
 
 Local development already expects these files in the project root.
 

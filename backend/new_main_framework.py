@@ -195,8 +195,8 @@ class UnsplashImageSearchStub(ImageSearchService):
         return results
 
 
-def _resolve_feature_file(local_path: str) -> str:
-    """Return a local feature file, downloading it from the Hub when configured."""
+def _resolve_retrieval_file(local_path: str) -> str:
+    """Return a local retrieval file, downloading it from the Hub when configured."""
     path = Path(local_path)
     if path.exists():
         return str(path)
@@ -204,7 +204,7 @@ def _resolve_feature_file(local_path: str) -> str:
     repo_id = os.getenv("HF_FEATURES_REPO_ID")
     if not repo_id:
         raise FileNotFoundError(
-            f"Missing feature file {local_path}. Place it in the project root or set "
+            f"Missing retrieval file {local_path}. Place it in the project root or set "
             "HF_FEATURES_REPO_ID to a Hugging Face repo containing this file."
         )
 
@@ -232,10 +232,11 @@ class ProductRetrievalService(ImageSearchService):
         source_name: str = "kaggle_fashion_dataset",
     ):
         if df is None:
+            products_csv = _resolve_retrieval_file(products_csv)
             self.df = pd.read_csv(products_csv)
 
-            text_features_path = _resolve_feature_file(text_features_path)
-            image_features_path = _resolve_feature_file(image_features_path)
+            text_features_path = _resolve_retrieval_file(text_features_path)
+            image_features_path = _resolve_retrieval_file(image_features_path)
 
             self.text_features = np.load(text_features_path).astype("float32")
             self.image_features = np.load(image_features_path).astype("float32")
