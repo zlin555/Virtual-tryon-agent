@@ -61,6 +61,7 @@ _tryon_svc = _resolve_tryon_service()
 _agent_app = None
 _agent_ready = threading.Event()
 _agent_load_error: Optional[Exception] = None
+_db_startup_error: Optional[Exception] = None
 _session_memory = SessionMemoryStore()
 _memory_embeddings = None
 _translation_model = None
@@ -362,7 +363,13 @@ def _load_agent_background():
 
 @app.on_event("startup")
 def startup_event():
-    init_db()
+    global _db_startup_error
+    try:
+        init_db()
+        _db_startup_error = None
+    except Exception as exc:
+        _db_startup_error = exc
+        print(f"[database] Startup initialization failed; continuing without database tables: {exc}")
     thread = threading.Thread(target=_load_agent_background, daemon=True)
     thread.start()
 
@@ -1103,6 +1110,7 @@ def health():
     return {
         "status": "ok",
         "search": "original_product_retrieval_clip_faiss",
+        "database": "error" if _db_startup_error else "ok",
     }
 
 
@@ -1112,6 +1120,7 @@ def ready():
         "ready": _agent_ready.is_set() and _agent_load_error is None,
         "search": "original_product_retrieval_clip_faiss",
         "error": str(_agent_load_error) if _agent_load_error else None,
+        "database_error": str(_db_startup_error) if _db_startup_error else None,
     }
 
 
